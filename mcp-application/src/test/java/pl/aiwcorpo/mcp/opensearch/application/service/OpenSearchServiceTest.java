@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -26,13 +27,22 @@ class OpenSearchServiceTest {
     private final List<String> searched = new ArrayList<>();
     private ResolvedIndices resolved = new ResolvedIndices(List.of(new ResolvedIndices.Index("logs-team-a-1", false)),
             List.of(), List.of());
+    private final Map<String, ResolvedIndices> byName = new HashMap<>();
+    private final List<String> resolvedExpressions = new ArrayList<>();
+    private boolean aliasRestricted;
     private List<LogHit> hits = List.of();
     private IndexDocument document;
 
     private final OpenSearchPort port = new OpenSearchPort() {
         @Override
         public Optional<ResolvedIndices> resolve(String expression) {
-            return Optional.ofNullable(resolved);
+            resolvedExpressions.add(expression);
+            return Optional.ofNullable(byName.getOrDefault(expression, resolved));
+        }
+
+        @Override
+        public boolean aliasHasFilterOrRouting(String alias) {
+            return aliasRestricted;
         }
 
         @Override
@@ -93,5 +103,40 @@ class OpenSearchServiceTest {
         document = new IndexDocument("secret-1", "1", Map.of());
 
         assertThatThrownBy(() -> service.getDocument("logs-team-a-1", "1")).isInstanceOf(NotFoundOrDeniedException.class);
+    }
+
+    @Test
+    void anAliasTargetThatIsHiddenDeniesTheCallEvenThoughResolveDoesNotSayIt() {
+        resolved = new ResolvedIndices(List.of(),
+                List.of(new ResolvedIndices.Alias("logs-team-a-x", List.of("logs-team-a-hidden"))), List.of());
+        byName.put("logs-team-a-hidden", new ResolvedIndices(List.of(new ResolvedIndices.Index("logs-team-a-hidden", true)),
+                List.of(), List.of()));
+
+        assertThatThrownBy(() -> service.searchLogs(query("logs-team-a-x", false))).isInstanceOf(NotFoundOrDeniedException.class);
+        assertThatThrownBy(() -> service.getDocument("logs-team-a-x", "1")).isInstanceOf(NotFoundOrDeniedException.class);
+        assertThat(searched).isEmpty();
+        assertThat(resolvedExpressions).contains("logs-team-a-hidden");
+    }
+
+    @Test
+    void anAliasTargetThatTheSecondResolveDoesNotReturnDeniesTheCall() {
+        resolved = new ResolvedIndices(List.of(),
+                List.of(new ResolvedIndices.Alias("logs-team-a-x", List.of("logs-team-a-1"))), List.of());
+        byName.put("logs-team-a-1", new ResolvedIndices(List.of(), List.of(), List.of()));
+
+        assertThatThrownBy(() -> service.searchLogs(query("logs-team-a-x", false))).isInstanceOf(NotFoundOrDeniedException.class);
+    }
+
+    @Test
+    void anAliasWithAFilterOrRoutingIsNotReadByDocumentId() {
+        resolved = new ResolvedIndices(List.of(),
+                List.of(new ResolvedIndices.Alias("logs-team-a-x", List.of("logs-team-a-1"))), List.of());
+        byName.put("logs-team-a-1", new ResolvedIndices(List.of(new ResolvedIndices.Index("logs-team-a-1", false)),
+                List.of(), List.of()));
+        document = new IndexDocument("logs-team-a-1", "1", Map.of());
+
+        assertThat(service.getDocument("logs-team-a-x", "1").id()).isEqualTo("1");
+        aliasRestricted = true;
+        assertThatThrownBy(() -> service.getDocument("logs-team-a-x", "1")).isInstanceOf(NotFoundOrDeniedException.class);
     }
 }

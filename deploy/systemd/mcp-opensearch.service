@@ -32,6 +32,13 @@ LockPersonality=true
 MemoryDenyWriteExecute=false
 ReadOnlyPaths=/etc/mcp-opensearch /opt/mcp-opensearch
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectProc=invisible
+ProcSubset=pid
+SystemCallFilter=@system-service
+SystemCallArchitectures=native
+UMask=0077
 
 [Install]
 WantedBy=multi-user.target

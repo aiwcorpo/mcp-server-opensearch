@@ -1,5 +1,25 @@
-# Tests and local runs only: plain HTTP on loopback. Server id, JWKS, test keys, in-memory jti store and
-# mtls.required=false come from TestGateway.serverProperties(); the starter accepts them only with 'dev'.
+# Tests and local runs without the platform environment: plain HTTP on loopback, no Redis, no certificates.
+# The starter accepts these relaxations only when 'dev' is the one active profile. Tests override the JWKS,
+# server id and connect URL with TestGateway.serverProperties().
 server:
   address: 127.0.0.1
   port: ${MCP_PORT:8080}
+
+aiwcorpo:
+  mcp:
+    platform:
+      internal-jwt:
+        # No gateway runs locally, so every call with a JWT ends 503 (JWKS unavailable); without a JWT it is 401.
+        jwks-uri: ${MCP_GATEWAY_JWKS_URI:http://127.0.0.1:18445/.well-known/jwks.json}
+        allow-test-keys: true
+        replay-store: memory
+      mtls:
+        required: false
+      credential:
+        connect-url: ${MCP_CONNECT_URL:http://localhost:18090/connections?system={system}}
+
+opensearch:
+  backend:
+    base-url: ${MCP_OPENSEARCH_URL:http://localhost:18081}
+  scope:
+    allowed-index-prefixes: ${MCP_OPENSEARCH_INDEX_PREFIXES:logs-dev}

@@ -12,8 +12,10 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.net.URLDecoder;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
 
 /**
@@ -30,9 +32,17 @@ import java.util.stream.Collectors;
  *   <li>{@code logs-team-a-hidden}: an index with {@code index.hidden=true};</li>
  *   <li>alias {@code logs-team-a-all} -> {@code logs-team-a-2026.10.27};</li>
  *   <li>under {@code app}: alias {@code app-leak} -> {@code secret-hr-1}, alias {@code app-two} -> both team-a
- *       indices, data stream {@code app-stream};</li>
- *   <li>an index expression containing {@code boom}: 500 echoing the caller's Authorization header.</li>
+ *       indices, alias {@code app-hidden-target} -> {@code logs-team-a-hidden} (which {@code _resolve/index}
+ *       does not report as hidden), alias {@code app-filtered} -> {@code logs-team-a-2026.10.27} with a filter
+ *       and routing, data stream {@code app-stream};</li>
+ *   <li>an index expression containing {@code boom}: 500 echoing the caller's Authorization header;</li>
+ *   <li>misbehaving answers: {@code logs-team-a-badjson} (resolve answers HTML), {@code logs-team-a-302}
+ *       (redirect to a second server that records what follows), document ids {@code doc-badjson},
+ *       {@code doc-302}, {@code doc-slow} (after {@link #SLOW_MILLIS}) and {@code doc-huge}
+ *       ({@link #HUGE_BYTES} of source).</li>
  * </ul>
+ * Paths and queries are recorded as they were on the wire (percent-encoded), so a test sees the encoding the
+ * client chose; routing in the stub uses the decoded path, as OpenSearch does.
  * The search answer deliberately ignores the {@code _index} filter and {@code _source} includes and also returns
  * a hit of {@code secret-hr-1} with extra fields, so the tests see what the server itself drops. Any request
  * with {@link #EXPIRED_CREDENTIAL} is answered 401, like a revoked token.
@@ -40,6 +50,9 @@ import java.util.stream.Collectors;
 final class StubBackend {
 
     static final String EXPIRED_CREDENTIAL = "Bearer expired-token-of-jkowalski";
+    static final String BODY_MARKER = "SECRETBODYTOKEN123";
+    static final long SLOW_MILLIS = 4_000;
+    static final int HUGE_BYTES = 256 * 1024;
 
     private static final List<String> INDICES = List.of("logs-team-a-2026.10.26", "logs-team-a-2026.10.27",
             "logs-team-ab-1", "secret-hr-1", "logs-team-a-restricted", "logs-team-a-hidden");
@@ -48,26 +61,44 @@ final class StubBackend {
     private static final Map<String, List<String>> ALIASES = Map.of(
             "logs-team-a-all", List.of("logs-team-a-2026.10.27"),
             "app-leak", List.of("secret-hr-1"),
-            "app-two", List.of("logs-team-a-2026.10.26", "logs-team-a-2026.10.27"));
+            "app-two", List.of("logs-team-a-2026.10.26", "logs-team-a-2026.10.27"),
+            "app-hidden-target", List.of("logs-team-a-hidden"),
+            "app-filtered", List.of("logs-team-a-2026.10.27"));
+    private static final Set<String> FILTERED_ALIASES = Set.of("app-filtered");
     private static final List<String> DATA_STREAMS = List.of("app-stream");
 
-    /** One request as OpenSearch saw it. */
+    /** One request as OpenSearch saw it; {@code path} and {@code query} are the raw, percent-encoded wire forms. */
     record Request(String method, String path, String query, String authorization, String body) {
+
+        String decodedPath() {
+            return URLDecoder.decode(path.replace("+", "%2B"), StandardCharsets.UTF_8);
+        }
     }
 
     private final HttpServer server;
+    private final HttpServer elsewhere;
     private final List<Request> requests = new CopyOnWriteArrayList<>();
+    private final List<String> elsewhereHits = new CopyOnWriteArrayList<>();
 
-    private StubBackend(HttpServer server) {
+    private StubBackend(HttpServer server, HttpServer elsewhere) {
         this.server = server;
+        this.elsewhere = elsewhere;
     }
 
     static StubBackend start() {
         try {
             HttpServer server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
-            StubBackend backend = new StubBackend(server);
+            HttpServer elsewhere = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
+            StubBackend backend = new StubBackend(server, elsewhere);
             server.createContext("/", backend::handle);
+            elsewhere.createContext("/", exchange -> {
+                backend.elsewhereHits.add(String.valueOf(exchange.getRequestHeaders().getFirst("Authorization")));
+                respond(exchange, 200, "{\"indices\":[],\"aliases\":[],\"data_streams\":[]}");
+            });
+            // The slow document must not hold up the requests of the next test.
+            server.setExecutor(Executors.newCachedThreadPool());
             server.start();
+            elsewhere.start();
             return backend;
         } catch (IOException ex) {
             throw new UncheckedIOException(ex);
@@ -82,6 +113,11 @@ final class StubBackend {
         return List.copyOf(requests);
     }
 
+    /** Authorization headers that reached the redirect target. */
+    List<String> elsewhereHits() {
+        return List.copyOf(elsewhereHits);
+    }
+
     /** Authorization headers received so far, in order. */
     List<String> authorizations() {
         return requests.stream().map(Request::authorization).toList();
@@ -89,18 +125,25 @@ final class StubBackend {
 
     void reset() {
         requests.clear();
+        elsewhereHits.clear();
     }
 
     private void handle(HttpExchange exchange) throws IOException {
         String authorization = exchange.getRequestHeaders().getFirst("Authorization");
         String path = exchange.getRequestURI().getPath();
         String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
-        requests.add(new Request(exchange.getRequestMethod(), path, exchange.getRequestURI().getQuery(),
-                String.valueOf(authorization), body));
+        requests.add(new Request(exchange.getRequestMethod(), exchange.getRequestURI().getRawPath(),
+                exchange.getRequestURI().getRawQuery(), String.valueOf(authorization), body));
         if (EXPIRED_CREDENTIAL.equals(authorization)) {
             respond(exchange, 401, "{\"error\":{\"type\":\"security_exception\",\"reason\":\"token expired\"},\"status\":401}");
         } else if (path.contains("boom")) {
             respond(exchange, 500, "{\"error\":\"boom\",\"seen\":\"" + authorization + "\"}");
+        } else if (path.equals("/_resolve/index/logs-team-a-badjson")) {
+            respond(exchange, 200, "<html>" + BODY_MARKER + " login</html>");
+        } else if (path.equals("/_resolve/index/logs-team-a-302")) {
+            redirect(exchange);
+        } else if (path.startsWith("/_alias/")) {
+            alias(exchange, path.substring("/_alias/".length()));
         } else if (path.startsWith("/_resolve/index/")) {
             resolve(exchange, path.substring("/_resolve/index/".length()));
         } else if (path.endsWith("/_search") && "POST".equals(exchange.getRequestMethod())) {
@@ -111,6 +154,26 @@ final class StubBackend {
         } else {
             respond(exchange, 400, "{\"error\":\"unsupported in stub\"}");
         }
+    }
+
+    private void alias(HttpExchange exchange, String name) throws IOException {
+        List<String> targets = ALIASES.get(name);
+        if (targets == null) {
+            respond(exchange, 404, "{\"error\":\"alias [" + name + "] missing\",\"status\":404}");
+            return;
+        }
+        String settings = FILTERED_ALIASES.contains(name)
+                ? "{\"filter\":{\"term\":{\"service.name\":\"billing\"}},\"index_routing\":\"1\",\"search_routing\":\"1\"}"
+                : "{}";
+        respond(exchange, 200, targets.stream().map(i -> "\"" + i + "\":{\"aliases\":{\"" + name + "\":" + settings + "}}")
+                .collect(Collectors.joining(",", "{", "}")));
+    }
+
+    private void redirect(HttpExchange exchange) throws IOException {
+        exchange.getResponseHeaders().set("Location",
+                "http://127.0.0.1:" + elsewhere.getAddress().getPort() + "/_resolve/index/logs-team-a-302");
+        exchange.sendResponseHeaders(302, -1);
+        exchange.close();
     }
 
     private void resolve(HttpExchange exchange, String expression) throws IOException {
@@ -172,6 +235,20 @@ final class StubBackend {
         } else if (!INDICES.contains(index)) {
             respond(exchange, 404, "{\"error\":{\"type\":\"index_not_found_exception\",\"index\":\"" + index
                     + "\"},\"status\":404}");
+        } else if ("doc-badjson".equals(id)) {
+            respond(exchange, 200, "<html>" + BODY_MARKER + " login</html>");
+        } else if ("doc-302".equals(id)) {
+            redirect(exchange);
+        } else if ("doc-slow".equals(id)) {
+            try {
+                Thread.sleep(SLOW_MILLIS);
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+            }
+            respond(exchange, 200, "{\"_index\":\"" + index + "\",\"_id\":\"doc-slow\",\"found\":true,\"_source\":{}}");
+        } else if ("doc-huge".equals(id)) {
+            respond(exchange, 200, "{\"_index\":\"" + index + "\",\"_id\":\"doc-huge\",\"found\":true,\"_source\":"
+                    + "{\"message\":\"" + "x".repeat(HUGE_BYTES) + "\"}}");
         } else if ("Xk3n8ZIBdLrT0q1aHf2p".equals(id)) {
             respond(exchange, 200, "{\"_index\":\"" + index + "\",\"_id\":\"" + id + "\",\"_version\":1,\"_seq_no\":0,"
                     + "\"_primary_term\":1,\"found\":true,\"_source\":{\"@timestamp\":\"2026-10-27T09:15:02.123Z\","

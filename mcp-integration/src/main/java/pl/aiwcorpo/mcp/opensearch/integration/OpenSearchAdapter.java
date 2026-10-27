@@ -12,8 +12,10 @@ import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.ssl.SslBundles;
+import org.springframework.core.env.Environment;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.MediaType;
@@ -21,7 +23,10 @@ import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.HttpServerErrorException;
+import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientException;
+import org.springframework.web.client.RestClientResponseException;
 import pl.aiwcorpo.mcp.opensearch.core.domain.IndexDocument;
 import pl.aiwcorpo.mcp.opensearch.core.domain.IndexScope;
 import pl.aiwcorpo.mcp.opensearch.core.domain.LogHit;
@@ -38,11 +43,13 @@ import pl.aiwcorpo.mcp.platform.security.CredentialRequiredException;
  * (C3), never with an account of the server. OpenSearch Security then applies the user's own index permissions
  * and DLS/FLS as a second layer behind the prefix checks of this server.
  *
- * <p>Only four endpoints are used: {@code GET _resolve/index/{expr}}, {@code POST {expr}/_search} with a body
- * the server builds, and {@code GET {index}/_doc/{id}}. No {@code _msearch}, {@code _mget}, scripts,
- * aggregations or {@code ?q=}. 404 and 403 both become "not visible" ({@code not_found_or_denied}), 401 means
- * the stored credential no longer works ({@code credential_required}). A failed call becomes an exception with
- * the status alone, so no response body reaches a message or a log line.
+ * <p>Only four endpoints are used: {@code GET _resolve/index/{expr}}, {@code GET _alias/{name}},
+ * {@code POST {expr}/_search} with a body the server builds, and {@code GET {index}/_doc/{id}}. No
+ * {@code _msearch}, {@code _mget}, scripts, aggregations or {@code ?q=}. 404 and 403 both become "not visible"
+ * ({@code not_found_or_denied}), 401 means the stored credential no longer works
+ * ({@code credential_required}). A failed call becomes an exception with the status alone, an unusable answer
+ * (redirect, unparsable or oversized body) a {@link BackendResponseException}, so no response body reaches a
+ * message or a log line.
  */
 @Component
 @EnableConfigurationProperties({OpenSearchBackendProperties.class, OpenSearchSearchProperties.class})
@@ -51,6 +58,7 @@ public class OpenSearchAdapter implements OpenSearchPort {
     /** System id of this server: {@code server-id} is {@code mcp-<system>}, and the starter refuses any other. */
     static final String SYSTEM = "opensearch";
 
+    private static final String DEV_PROFILE = "dev";
     private static final Logger log = LoggerFactory.getLogger(OpenSearchAdapter.class);
 
     /** Open indices only: wildcards never expand to hidden or closed indices; missing names are skipped. */
@@ -60,15 +68,22 @@ public class OpenSearchAdapter implements OpenSearchPort {
     private final OpenSearchSearchProperties search;
 
     public OpenSearchAdapter(OpenSearchBackendProperties properties, OpenSearchSearchProperties search,
-            ObjectProvider<SslBundles> sslBundles) {
+            ObjectProvider<SslBundles> sslBundles, Environment environment) {
         this.search = search;
         this.client = RestClient.builder()
-                .baseUrl(requireBaseUrl(properties.baseUrl()))
+                .baseUrl(requireBaseUrl(properties.baseUrl(),
+                        environment.matchesProfiles(DEV_PROFILE) || properties.allowPlainHttp()))
                 .requestFactory(requestFactory(properties, sslBundles))
-                .defaultStatusHandler(HttpStatusCode::isError, (request, response) -> {
+                .requestInterceptor(new BoundedBodyInterceptor(properties.maxResponseSize().toBytes()))
+                .defaultStatusHandler(status -> status.isError() || status.is3xxRedirection(), (request, response) -> {
                     // Status only: the body and headers of a failed call may echo the credential or carry backend
                     // detail (OpenSearch puts index names and query fragments in its error reasons).
                     HttpStatusCode status = response.getStatusCode();
+                    if (status.is3xxRedirection()) {
+                        // Redirects are not followed (the credential must not go elsewhere) and an empty body
+                        // must not read as "not found": an SSO login page would turn into not_found_or_denied.
+                        throw new BackendResponseException("redirect " + status.value());
+                    }
                     throw status.is4xxClientError()
                             ? HttpClientErrorException.create(status, "", HttpHeaders.EMPTY, new byte[0], null)
                             : HttpServerErrorException.create(status, "", HttpHeaders.EMPTY, new byte[0], null);
@@ -79,66 +94,113 @@ public class OpenSearchAdapter implements OpenSearchPort {
     @Override
     public Optional<ResolvedIndices> resolve(String expression) {
         BackendCredential credential = credential();
+        ResolveResponse response;
         try {
-            ResolveResponse response = client.get()
+            response = client.get()
                     .uri("/_resolve/index/{expression}?" + INDICES_OPTIONS, expression)
                     .headers(credential::applyTo)
                     .retrieve()
                     .body(ResolveResponse.class);
-            return Optional.of(response == null ? new ResolvedIndices(List.of(), List.of(), List.of()) : response.toDomain());
         } catch (HttpClientErrorException.NotFound | HttpClientErrorException.Forbidden hidden) {
             return Optional.empty();
         } catch (HttpClientErrorException.Unauthorized expired) {
             throw new CredentialRequiredException(SYSTEM);
+        } catch (RestClientResponseException | ResourceAccessException statusOrIo) {
+            throw statusOrIo;
+        } catch (RestClientException unreadable) {
+            throw new BackendResponseException("body not readable");
         }
+        if (response == null) {
+            throw new BackendResponseException("empty body");
+        }
+        return Optional.of(response.toDomain());
+    }
+
+    @Override
+    public boolean aliasHasFilterOrRouting(String alias) {
+        BackendCredential credential = credential();
+        Map<String, AliasedIndex> response;
+        try {
+            response = client.get()
+                    .uri("/_alias/{alias}", alias)
+                    .headers(credential::applyTo)
+                    .retrieve()
+                    .body(new ParameterizedTypeReference<Map<String, AliasedIndex>>() { });
+        } catch (HttpClientErrorException.NotFound | HttpClientErrorException.Forbidden hidden) {
+            throw new NotFoundOrDeniedException();
+        } catch (HttpClientErrorException.Unauthorized expired) {
+            throw new CredentialRequiredException(SYSTEM);
+        } catch (RestClientResponseException | ResourceAccessException statusOrIo) {
+            throw statusOrIo;
+        } catch (RestClientException unreadable) {
+            throw new BackendResponseException("body not readable");
+        }
+        if (response == null || response.isEmpty()) {
+            throw new BackendResponseException("empty body");
+        }
+        return response.values().stream().anyMatch(index -> index.aliases() == null
+                || !index.aliases().containsKey(alias) || index.aliases().get(alias).restricts());
     }
 
     @Override
     public List<LogHit> search(String expression, IndexScope scope, LogQuery query) {
         BackendCredential credential = credential();
+        SearchResponse response;
         try {
-            SearchResponse response = client.post()
+            response = client.post()
                     .uri("/{expression}/_search?" + INDICES_OPTIONS + "&allow_partial_search_results=false", expression)
                     .headers(credential::applyTo)
                     .contentType(MediaType.APPLICATION_JSON)
                     .body(searchBody(scope, query))
                     .retrieve()
                     .body(SearchResponse.class);
-            if (response == null || response.hits() == null || response.hits().hits() == null) {
-                return List.of();
-            }
-            List<LogHit> hits = new ArrayList<>();
-            for (Hit hit : response.hits().hits()) {
-                hits.add(new LogHit(hit.index(), UntrustedValues.cleanText(hit.id()),
-                        timestamp(hit.source()), pick(hit.source())));
-            }
-            return hits;
         } catch (HttpClientErrorException.NotFound | HttpClientErrorException.Forbidden hidden) {
             throw new NotFoundOrDeniedException();
         } catch (HttpClientErrorException.Unauthorized expired) {
             throw new CredentialRequiredException(SYSTEM);
+        } catch (RestClientResponseException | ResourceAccessException statusOrIo) {
+            throw statusOrIo;
+        } catch (RestClientException unreadable) {
+            throw new BackendResponseException("body not readable");
         }
+        if (response == null || response.hits() == null || response.hits().hits() == null) {
+            throw new BackendResponseException("no hits section");
+        }
+        List<LogHit> hits = new ArrayList<>();
+        for (Hit hit : response.hits().hits()) {
+            hits.add(new LogHit(hit.index(), UntrustedValues.cleanText(hit.id()),
+                    timestamp(hit.source()), pick(hit.source())));
+        }
+        return hits;
     }
 
     @Override
     public Optional<IndexDocument> findDocument(String index, String id) {
         BackendCredential credential = credential();
+        DocumentResponse response;
         try {
-            DocumentResponse response = client.get()
+            response = client.get()
                     .uri("/{index}/_doc/{id}?_source_includes={fields}", index, id, String.join(",", search.resultFields()))
                     .headers(credential::applyTo)
                     .retrieve()
                     .body(DocumentResponse.class);
-            if (response == null || !Boolean.TRUE.equals(response.found()) || response.index() == null) {
-                return Optional.empty();
-            }
-            return Optional.of(new IndexDocument(response.index(), UntrustedValues.cleanText(response.id()),
-                    pick(response.source())));
         } catch (HttpClientErrorException.NotFound | HttpClientErrorException.Forbidden hidden) {
             return Optional.empty();
         } catch (HttpClientErrorException.Unauthorized expired) {
             throw new CredentialRequiredException(SYSTEM);
+        } catch (RestClientResponseException | ResourceAccessException statusOrIo) {
+            throw statusOrIo;
+        } catch (RestClientException unreadable) {
+            throw new BackendResponseException("body not readable");
         }
+        if (response == null) {
+            throw new BackendResponseException("empty body");
+        }
+        if (!Boolean.TRUE.equals(response.found()) || response.index() == null) {
+            return Optional.empty();
+        }
+        return Optional.of(new IndexDocument(response.index(), UntrustedValues.cleanText(response.id()),
+                pick(response.source())));
     }
 
     /**
@@ -234,13 +296,26 @@ public class OpenSearchAdapter implements OpenSearchPort {
         return value;
     }
 
-    private static String requireBaseUrl(String baseUrl) {
+    private static String requireBaseUrl(String baseUrl, boolean plainHttpAllowed) {
         if (baseUrl == null || baseUrl.isBlank()) {
             throw new IllegalStateException("opensearch.backend.base-url (MCP_OPENSEARCH_URL) must point at the OpenSearch API");
         }
         URI uri = URI.create(baseUrl);
         if (uri.getHost() == null || !("https".equals(uri.getScheme()) || "http".equals(uri.getScheme()))) {
             throw new IllegalStateException("opensearch.backend.base-url must be an absolute http(s) URL");
+        }
+        if (uri.getRawUserInfo() != null || uri.getRawQuery() != null || uri.getRawFragment() != null) {
+            // The credential comes from the gateway (C3); a userinfo here would be a second, shared one, and a query
+            // or fragment would be glued onto every request path.
+            throw new IllegalStateException("opensearch.backend.base-url must not carry user info, a query or a fragment");
+        }
+        if (!"https".equals(uri.getScheme())) {
+            if (!plainHttpAllowed) {
+                // The user's credential travels in a header; over http it would cross the network in clear text.
+                throw new IllegalStateException("opensearch.backend.base-url must use https outside the 'dev' profile "
+                        + "(opensearch.backend.allow-plain-http exists for the mocks of mcp-platform-dev only)");
+            }
+            log.warn("event=backend_plain_http detail=\"credentials go to the backend unencrypted\"");
         }
         return baseUrl;
     }
@@ -287,6 +362,20 @@ public class OpenSearchAdapter implements OpenSearchPort {
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     record ResolvedDataStream(String name) {
+    }
+
+    /** {@code GET _alias/{name}}: per index, the alias with its optional filter and routing. */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    record AliasedIndex(Map<String, AliasSettings> aliases) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    record AliasSettings(Map<String, Object> filter, @JsonProperty("index_routing") String indexRouting,
+            @JsonProperty("search_routing") String searchRouting) {
+
+        boolean restricts() {
+            return (filter != null && !filter.isEmpty()) || indexRouting != null || searchRouting != null;
+        }
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)

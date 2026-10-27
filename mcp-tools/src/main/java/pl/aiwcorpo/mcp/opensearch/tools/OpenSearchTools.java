@@ -19,10 +19,13 @@ import pl.aiwcorpo.mcp.opensearch.core.port.in.OpenSearchUseCase;
 import pl.aiwcorpo.mcp.platform.error.InvalidToolArgumentException;
 import pl.aiwcorpo.mcp.platform.guard.RiskLevel;
 import pl.aiwcorpo.mcp.platform.guard.ToolRisk;
+import pl.aiwcorpo.mcp.platform.input.ArgumentLimits;
 
 /**
  * The MCP tools of this server. Every argument is untrusted input from a model. Parameter names are the public
- * argument names of the input schema ({@link OpenSearchToolSchemas}), hence {@code index_pattern}.
+ * argument names of the input schema, hence {@code index_pattern}; the limits in {@link ArgumentLimits} are
+ * published in the schema by {@code SchemaLimitedToolCallbacks} and enforced by the starter before the method
+ * runs, and the checks below repeat what the tool relies on.
  *
  * <p>Index arguments are checked here for syntax and fail closed on everything OpenSearch would read as more
  * than one plain name: lists, exclusions, date math, remote clusters, {@code _all}, a bare {@code *} and
@@ -32,12 +35,18 @@ import pl.aiwcorpo.mcp.platform.guard.ToolRisk;
 @Service
 public class OpenSearchTools {
 
+    public static final String SEARCH_LOGS = "search_logs";
+    public static final String GET_DOCUMENT = "get_document";
+
     /** Pattern of the brief and of the input schema; a leading '-' (exclusion) is rejected separately. */
-    private static final Pattern INDEX_PATTERN = Pattern.compile("[a-z0-9-]+\\*?");
+    private static final String INDEX_PATTERN_REGEX = "^[a-z0-9-]+\\*?$";
+    /** Document ids that fit a URL path segment; the same text goes to the input schema. */
+    private static final String DOCUMENT_ID_REGEX = "^[A-Za-z0-9_-][A-Za-z0-9_.:@+=-]{0,255}$";
+    private static final Pattern INDEX_PATTERN = Pattern.compile(INDEX_PATTERN_REGEX);
     /** {@code OpenSearchIndexName} of mcp-contracts 2.0.2 without a leading dot. */
     private static final Pattern INDEX_NAME = Pattern.compile("[a-z0-9][a-z0-9._-]{0,254}");
     /** OpenSearch ids are free text up to 512 bytes; this keeps ids that fit a URL path segment unescaped. */
-    private static final Pattern DOCUMENT_ID = Pattern.compile("[A-Za-z0-9_-][A-Za-z0-9_.:@+=-]{0,255}");
+    private static final Pattern DOCUMENT_ID = Pattern.compile(DOCUMENT_ID_REGEX);
     private static final int MAX_QUERY = 512;
     private static final int MAX_TIME = 40;
     private static final int DEFAULT_SIZE = 20;
@@ -51,16 +60,21 @@ public class OpenSearchTools {
         this.maxRange = limits.maxRange();
     }
 
-    @Tool(name = OpenSearchToolSchemas.SEARCH_LOGS, description = "Searches log documents in the indices matching one"
+    @Tool(name = SEARCH_LOGS, description = "Searches log documents in the indices matching one"
             + " index pattern within a time range. Returns up to size entries, newest first, each with index, id,"
             + " timestamp and the configured log fields under 'data'. No aggregations and no total count.")
     @ToolRisk(RiskLevel.READ_ONLY)
     public SearchLogsResult searchLogs(
-            @ToolParam(description = "One index name, or one name followed by '*'") String index_pattern,
-            @ToolParam(description = "Text searched in the configured log fields") String query,
-            @ToolParam(description = "Start of the time range, inclusive, ISO-8601 with offset") String from,
-            @ToolParam(description = "End of the time range, exclusive, ISO-8601 with offset") String to,
-            @ToolParam(description = "Number of entries, 1-100, default 20", required = false) Integer size) {
+            @ToolParam(description = "One index name, or one name followed by '*'. Lower-case letters, digits and '-'")
+            @ArgumentLimits(minLength = 1, maxLength = 255, pattern = INDEX_PATTERN_REGEX) String index_pattern,
+            @ToolParam(description = "Text searched in the configured log fields (words, \"phrases\", +, |, -, trailing *)")
+            @ArgumentLimits(minLength = 1, maxLength = MAX_QUERY) String query,
+            @ToolParam(description = "Start of the time range, inclusive, ISO-8601 with offset, e.g. 2026-10-27T08:00:00Z")
+            @ArgumentLimits(minLength = 20, maxLength = MAX_TIME) String from,
+            @ToolParam(description = "End of the time range, exclusive, ISO-8601 with offset, later than from")
+            @ArgumentLimits(minLength = 20, maxLength = MAX_TIME) String to,
+            @ToolParam(description = "Number of entries, 1-100, default 20", required = false)
+            @ArgumentLimits(minimum = 1, maximum = MAX_SIZE) Integer size) {
         IndexPattern pattern = validPattern(index_pattern);
         String text = validQuery(query);
         Instant start = validTime("from", from);
@@ -73,18 +87,19 @@ public class OpenSearchTools {
         }
         int count = validSize(size);
         List<LogHit> hits = useCase.searchLogs(new LogQuery(pattern, text, start, end, count));
-        return new SearchLogsResult(pattern.toString(), start.toString(), end.toString(), hits.size(), hits,
-                SearchLogsResult.DATA_NOTE);
+        return new SearchLogsResult(pattern.toString(), start.toString(), end.toString(), hits.size(), hits);
     }
 
-    @Tool(name = OpenSearchToolSchemas.GET_DOCUMENT, description = "Returns one document by index and id: index, id"
+    @Tool(name = GET_DOCUMENT, description = "Returns one document by index and id: index, id"
             + " and the configured fields under 'data'.")
     @ToolRisk(RiskLevel.READ_ONLY)
     public DocumentResult getDocument(
-            @ToolParam(description = "One concrete index name") String index,
-            @ToolParam(description = "Document id") String id) {
+            @ToolParam(description = "One concrete index name (no wildcard, no list)")
+            @ArgumentLimits(contractPattern = "OpenSearchIndexName", minLength = 1, maxLength = 255) String index,
+            @ToolParam(description = "Document id as returned by search_logs")
+            @ArgumentLimits(minLength = 1, maxLength = 256, pattern = DOCUMENT_ID_REGEX) String id) {
         IndexDocument document = useCase.getDocument(validIndexName(index), validDocumentId(id));
-        return new DocumentResult(document.index(), document.id(), document.data(), SearchLogsResult.DATA_NOTE);
+        return new DocumentResult(document.index(), document.id(), document.data());
     }
 
     static IndexPattern validPattern(String value) {

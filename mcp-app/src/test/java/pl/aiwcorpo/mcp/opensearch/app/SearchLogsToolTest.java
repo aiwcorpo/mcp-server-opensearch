@@ -42,8 +42,9 @@ class SearchLogsToolTest extends ServerTestSupport {
             assertThat(result.isError()).as(text(result)).isFalse();
             assertThat(text(result))
                     .contains("\"index\":\"logs-team-a-2026.10.27\"", "\"id\":\"Xk3n8ZIBdLrT0q1aHf2p\"",
-                            "\"timestamp\":\"2026-10-27T09:15:02.123Z\"", "\"log.level\":\"ERROR\"", "\"returned\":2",
-                            "data, not instructions")
+                            "\"timestamp\":\"2026-10-27T09:15:02.123Z\"", "\"returned\":2")
+                    .as("free text is marked as untrusted data").contains("\"log.level\":{\"kind\":\"untrusted-data\","
+                            + "\"format\":\"text/plain\",\"text\":\"ERROR\",\"truncated\":false}")
                     .as("markup is escaped").contains("&lt;script&gt;alert(1)&lt;/script&gt; &amp; retried")
                     .doesNotContain("<script>")
                     .as("fields outside result-fields stay in the adapter").doesNotContain("not-for-the-model")
@@ -51,11 +52,11 @@ class SearchLogsToolTest extends ServerTestSupport {
         }
         assertThat(BACKEND.authorizations()).containsExactly(PAT, PAT);
         StubBackend.Request resolve = BACKEND.requests().get(0);
-        assertThat(resolve.path()).isEqualTo("/_resolve/index/logs-team-a-*");
+        assertThat(resolve.path()).isEqualTo("/_resolve/index/logs-team-a-%2A");
         assertThat(resolve.query()).contains("expand_wildcards=open");
         StubBackend.Request search = BACKEND.requests().get(1);
         assertThat(search.method()).isEqualTo("POST");
-        assertThat(search.path()).isEqualTo("/logs-team-a-*/_search");
+        assertThat(search.path()).isEqualTo("/logs-team-a-%2A/_search");
         assertThat(search.query()).contains("expand_wildcards=open", "allow_partial_search_results=false");
         assertThat(search.body())
                 .contains("\"simple_query_string\":{\"query\":\"payment failed\",\"fields\":[\"message\"]",
@@ -73,8 +74,11 @@ class SearchLogsToolTest extends ServerTestSupport {
 
             assertThat(result.isError()).as(text(result)).isFalse();
         }
-        assertThat(BACKEND.requests().get(0).path()).isEqualTo("/_resolve/index/logs-team-a,logs-team-a-*");
-        assertThat(BACKEND.requests().get(1).path()).isEqualTo("/logs-team-a,logs-team-a-*/_search");
+        // The comma is written by the server and sent encoded, the wildcard too; this is what OpenSearch decodes
+        // before it splits the expression.
+        assertThat(BACKEND.requests().get(0).path()).isEqualTo("/_resolve/index/logs-team-a%2Clogs-team-a-%2A");
+        assertThat(BACKEND.requests().get(1).path()).isEqualTo("/logs-team-a%2Clogs-team-a-%2A/_search");
+        assertThat(BACKEND.requests().get(1).decodedPath()).isEqualTo("/logs-team-a,logs-team-a-*/_search");
     }
 
     @Test
@@ -137,9 +141,12 @@ class SearchLogsToolTest extends ServerTestSupport {
         try (McpSyncClient client = clientWithCredential(PAT)) {
             McpSchema.CallToolResult byName = call(client, "search_logs", args("app-leak"));
             McpSchema.CallToolResult byWildcard = call(client, "search_logs", args("app-l*"));
+            McpSchema.CallToolResult toHiddenIndex = call(client, "search_logs", args("app-hidden-target"));
 
             assertThat(text(byName)).contains("\"error\":\"not_found_or_denied\"").doesNotContain("secret-hr");
             assertThat(text(byWildcard)).isEqualTo(text(byName));
+            assertThat(text(toHiddenIndex)).as("an in-scope alias must not lead to a hidden index")
+                    .isEqualTo(text(byName));
         }
         assertThat(BACKEND.requests()).noneMatch(r -> r.path().endsWith("/_search"));
     }
@@ -185,36 +192,85 @@ class SearchLogsToolTest extends ServerTestSupport {
             for (String pattern : new String[] {"*", "_all", "-logs-team-a-*", ".security", ".ds-logs-team-a-stream-000001",
                     "logs-team-a-*,secret-*", "logs-team-a-2026,secret-hr-1", "remote:logs-team-a-*", "<logs-team-a-{now/d}>",
                     "logs-*-a", "logs-team-a-**", "LOGS-TEAM-A", "logs-team-a-2026.10.27", "logs-team-a-?", "", "a".repeat(256)}) {
-                assertRejectedArguments(call(client, "search_logs", args(pattern)), "index_pattern");
-            }
-            assertThat(text(call(client, "search_logs", args("-logs-team-a-*"))))
-                    .contains("\"error\":\"invalid_argument\"", "exclusions are not supported");
-            for (String outside : new String[] {"secret-*", "logs-team-ab*", "logs-team-ab-1", "logs", "logs-team-*"}) {
-                assertThat(text(call(client, "search_logs", args(outside)))).as(outside)
-                        .contains("\"error\":\"invalid_argument\"", "index prefix served by this server");
+                McpSchema.CallToolResult result = call(client, "search_logs", args(pattern));
+
+                assertInvalidArgument(result);
+                if (pattern.length() > 3) {
+                    assertThat(text(result)).as("the value is not echoed").doesNotContain(pattern);
+                }
             }
         }
         assertThat(BACKEND.requests()).isEmpty();
     }
 
     @Test
-    void otherArgumentsAreCheckedBeforeOpenSearch() {
-        Map<String, Map<String, Object>> cases = new java.util.LinkedHashMap<>();
-        cases.put("query must be", with("query", " "));
-        cases.put("query must be 1-512", with("query", "x".repeat(513)));
-        cases.put("control characters", with("query", "a\u0000b"));
-        cases.put("from must be an ISO-8601", with("from", "2026-10-27 08:00"));
-        cases.put("from must be an ISO-8601 date-time with offset", with("from", "2026-10-27T08:00:00"));
-        cases.put("to must be later than from", with("to", "2026-10-27T08:00:00Z"));
-        cases.put("may not exceed 168 hours", with("from", "2026-10-01T00:00:00Z"));
-        cases.put("size must be between 1 and 100", with("size", 101));
-        cases.put("size must be between", with("size", 0));
+    void aWellFormedPatternOutsideTheScopeLooksLikeAMissingIndex() {
+        try (McpSyncClient client = clientWithCredential(PAT)) {
+            String missing = text(call(client, "search_logs", args("logs-team-a-nothing")));
+            assertThat(missing).contains("\"error\":\"not_found_or_denied\"");
+            for (String outside : new String[] {"secret-*", "logs-team-ab*", "logs-team-ab-1", "logs", "logs-team-*"}) {
+                assertThat(text(call(client, "search_logs", args(outside)))).as(outside).isEqualTo(missing);
+            }
+        }
+        assertThat(BACKEND.requests()).as("only the in-scope name reached OpenSearch (resolve)")
+                .allMatch(r -> r.decodedPath().equals("/_resolve/index/logs-team-a-nothing"));
+    }
+
+    @Test
+    void argumentsBreakingTheSchemaAreRejectedByTheStarterBeforeOpenSearch() {
         Map<String, Object> extra = args("logs-team-a-*");
         extra.put("aggs", Map.of("by_index", Map.of("terms", Map.of("field", "_index"))));
-        cases.put("not declared in the input schema", extra);
+        Map<String, Object> missingQuery = args("logs-team-a-*");
+        missingQuery.remove("query");
+        Map<String, Object> nullQuery = args("logs-team-a-*");
+        nullQuery.put("query", null);
         try (McpSyncClient client = clientWithCredential(PAT)) {
-            cases.forEach((message, arguments) -> assertRejectedArguments(call(client, "search_logs", arguments), message));
+            for (Map<String, Object> arguments : java.util.List.of(extra, missingQuery, nullQuery, with("query", "x".repeat(513)),
+                    with("query", 42), with("from", "2026-10-27 08:00"), with("from", "2026-10-27T08:00:00"),
+                    with("size", 101), with("size", 0), with("size", "10"), with("size", 1.5))) {
+                McpSchema.CallToolResult result = call(client, "search_logs", arguments);
+
+                assertInvalidArgument(result);
+                assertThat(text(result)).doesNotContain("aggs", "by_index", "xxxxxxxx");
+            }
         }
+        assertThat(BACKEND.requests()).isEmpty();
+    }
+
+    @Test
+    void argumentsThatPassTheSchemaAreCheckedByTheToolBeforeOpenSearch() {
+        Map<String, Map<String, Object>> cases = new java.util.LinkedHashMap<>();
+        cases.put("query must be", with("query", " "));
+        cases.put("control characters", with("query", "a\u0000b"));
+        cases.put("from must be an ISO-8601 date-time with offset", with("from", "2026-10-27 08:00:00Z+01"));
+        cases.put("to must be later than from", with("to", "2026-10-27T08:00:00Z"));
+        cases.put("may not exceed 168 hours", with("from", "2026-10-01T00:00:00Z"));
+        cases.put("index_pattern must not start with '-'", with("index_pattern", "-logs-team-a-*"));
+        try (McpSyncClient client = clientWithCredential(PAT)) {
+            cases.forEach((message, arguments) -> {
+                McpSchema.CallToolResult result = call(client, "search_logs", arguments);
+
+                assertInvalidArgument(result);
+                assertThat(text(result)).contains(message);
+            });
+        }
+        assertThat(BACKEND.requests()).isEmpty();
+    }
+
+    @Test
+    void anUnknownArgumentNameCannotForgeALogLine(CapturedOutput output) {
+        String forged = "{\"ts\":\"2099-01-01T00:00:00Z\",\"event\":\"tool_call\",\"outcome\":\"FORGED\"}";
+        Map<String, Object> arguments = args("logs-team-a-*");
+        arguments.put("x\n" + forged + "\nY", "v");
+        try (McpSyncClient client = clientWithCredential(PAT)) {
+            McpSchema.CallToolResult result = call(client, "search_logs", arguments);
+
+            assertInvalidArgument(result);
+            assertThat(text(result)).doesNotContain("FORGED");
+        }
+        assertThat(output.getAll()).as("the name from the client is not logged at all").doesNotContain("FORGED");
+        assertThat(output.getAll().lines()).noneMatch(line -> line.startsWith("{\"ts\":\"2099"));
+        assertThat(output.getAll()).as("the refused call is still audited (C8)").contains("\"tool\":\"search_logs\"");
         assertThat(BACKEND.requests()).isEmpty();
     }
 
@@ -238,6 +294,27 @@ class SearchLogsToolTest extends ServerTestSupport {
         }
         assertThat(output.getAll()).contains("\"tool\":\"search_logs\"").doesNotContain("opensearch-token-of")
                 .as("the backend's error body stays out of the log").doesNotContain("boom\"");
+    }
+
+    @Test
+    void anUnreadableBodyStaysOutOfTheResultAndTheLog(CapturedOutput output) {
+        try (McpSyncClient client = clientWithCredential(PAT)) {
+            McpSchema.CallToolResult result = call(client, "search_logs", args("logs-team-a-badjson"));
+
+            assertThat(result.isError()).isTrue();
+            assertThat(text(result)).contains("\"error\":\"internal_error\"").doesNotContain(StubBackend.BODY_MARKER);
+        }
+        assertThat(output.getAll()).contains("BackendResponseException").doesNotContain(StubBackend.BODY_MARKER);
+    }
+
+    @Test
+    void aRedirectIsNotFollowedAndNotReadAsMissing() {
+        try (McpSyncClient client = clientWithCredential(PAT)) {
+            McpSchema.CallToolResult result = call(client, "search_logs", args("logs-team-a-302"));
+
+            assertThat(text(result)).contains("\"error\":\"internal_error\"");
+        }
+        assertThat(BACKEND.elsewhereHits()).as("the credential must not follow the Location").isEmpty();
     }
 
     private static Map<String, Object> with(String name, Object value) {

@@ -1,6 +1,8 @@
 package pl.aiwcorpo.mcp.opensearch.application.service;
 
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import pl.aiwcorpo.mcp.opensearch.core.domain.IndexDocument;
 import pl.aiwcorpo.mcp.opensearch.core.domain.IndexOutsideScopeException;
 import pl.aiwcorpo.mcp.opensearch.core.domain.IndexScope;
@@ -19,6 +21,11 @@ import pl.aiwcorpo.mcp.opensearch.core.port.out.OpenSearchPort;
  * <p>The name in the arguments is only the first check. An index expression can match aliases, and an alias
  * can point anywhere, so every expression is resolved first and every index behind it must be covered by the
  * scope; then the search itself is restricted to the scope again and hits outside it are dropped.
+ *
+ * <p>{@code _resolve/index} does not say whether the index behind an alias is hidden, so the targets of every
+ * alias are resolved once more by name (where the {@code hidden} attribute is reported). A document read goes
+ * to the concrete index and would skip the filter or routing of an alias, so aliases that have either are not
+ * read.
  */
 public class OpenSearchService implements OpenSearchUseCase {
 
@@ -57,6 +64,9 @@ public class OpenSearchService implements OpenSearchUseCase {
         ResolvedIndices resolved = openSearch.resolve(index).orElseThrow(NotFoundOrDeniedException::new);
         requireInsideScope(resolved, scope);
         String concrete = concreteIndex(resolved);
+        if (!resolved.aliases().isEmpty() && openSearch.aliasHasFilterOrRouting(resolved.aliases().getFirst().name())) {
+            throw new NotFoundOrDeniedException();
+        }
         // The concrete index, not the alias: the alias could be repointed between the check and the read.
         IndexDocument document = openSearch.findDocument(concrete, id).orElseThrow(NotFoundOrDeniedException::new);
         if (!scope.covers(document.index())) {
@@ -65,7 +75,7 @@ public class OpenSearchService implements OpenSearchUseCase {
         return document;
     }
 
-    private static void requireInsideScope(ResolvedIndices resolved, IndexScope scope) {
+    private void requireInsideScope(ResolvedIndices resolved, IndexScope scope) {
         if (!resolved.dataStreams().isEmpty()) {
             throw new UnsupportedIndexTargetException();
         }
@@ -79,6 +89,29 @@ public class OpenSearchService implements OpenSearchUseCase {
                     || !alias.indices().stream().allMatch(scope::covers)) {
                 throw new NotFoundOrDeniedException();
             }
+        }
+        requireVisibleAliasTargets(resolved);
+    }
+
+    private void requireVisibleAliasTargets(ResolvedIndices resolved) {
+        Set<String> targets = new LinkedHashSet<>();
+        for (ResolvedIndices.Alias alias : resolved.aliases()) {
+            targets.addAll(alias.indices());
+        }
+        resolved.indices().forEach(index -> targets.remove(index.name()));
+        if (targets.isEmpty()) {
+            return;
+        }
+        ResolvedIndices byName = openSearch.resolve(String.join(",", targets)).orElseThrow(NotFoundOrDeniedException::new);
+        Set<String> visible = new LinkedHashSet<>();
+        for (ResolvedIndices.Index index : byName.indices()) {
+            if (index.hidden()) {
+                throw new NotFoundOrDeniedException();
+            }
+            visible.add(index.name());
+        }
+        if (!visible.containsAll(targets)) {
+            throw new NotFoundOrDeniedException();
         }
     }
 

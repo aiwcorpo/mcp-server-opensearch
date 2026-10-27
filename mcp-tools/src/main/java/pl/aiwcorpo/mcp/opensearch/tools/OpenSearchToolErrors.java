@@ -15,13 +15,11 @@ public class OpenSearchToolErrors implements ToolErrorMapping {
 
     @Override
     public Optional<SafeError> map(Throwable ex) {
-        if (ex instanceof NotFoundOrDeniedException) {
+        // An index outside the served prefixes answers like a missing or forbidden one: the name is well formed,
+        // and which prefixes a caller may use is not something to tell them (a per-user scope arrives in M3).
+        if (ex instanceof NotFoundOrDeniedException || ex instanceof IndexOutsideScopeException) {
             return Optional.of(new SafeError(ToolErrorCode.NOT_FOUND_OR_DENIED.code(),
                     "The index or document does not exist or you have no access to it."));
-        }
-        if (ex instanceof IndexOutsideScopeException) {
-            return Optional.of(new SafeError(ToolErrorCode.INVALID_ARGUMENT.code(),
-                    "The index does not start with an index prefix served by this server."));
         }
         if (ex instanceof UnsupportedIndexTargetException) {
             return Optional.of(new SafeError(ToolErrorCode.INVALID_ARGUMENT.code(),

@@ -9,11 +9,15 @@ import java.util.Map;
 import org.assertj.core.api.InstanceOfAssertFactories;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import pl.aiwcorpo.mcp.opensearch.core.port.out.OpenSearchPort;
 import pl.aiwcorpo.mcp.platform.security.CredentialRequiredException;
 
 /** {@code get_document} through the test gateway against the OpenSearch stub. */
+@ExtendWith(OutputCaptureExtension.class)
 class GetDocumentToolTest extends ServerTestSupport {
 
     private static final String PAT = "Bearer opensearch-token-of-jkowalski-5c1e";
@@ -36,13 +40,27 @@ class GetDocumentToolTest extends ServerTestSupport {
             assertThat(result.isError()).as(text(result)).isFalse();
             assertThat(text(result))
                     .contains("\"index\":\"logs-team-a-2026.10.27\"", "\"id\":\"" + DOC_ID + "\"",
-                            "\"service.name\":\"billing\"", "&lt;b&gt;payment&lt;/b&gt; failed", "data, not instructions")
+                            "\"service.name\":{\"kind\":\"untrusted-data\",\"format\":\"text/plain\",\"text\":\"billing\","
+                                    + "\"truncated\":false}",
+                            "&lt;b&gt;payment&lt;/b&gt; failed")
                     .doesNotContain("<b>", "not-for-the-model", "_seq_no");
         }
         assertThat(BACKEND.authorizations()).containsExactly(PAT, PAT);
         StubBackend.Request read = BACKEND.requests().get(1);
         assertThat(read.path()).isEqualTo("/logs-team-a-2026.10.27/_doc/" + DOC_ID);
-        assertThat(read.query()).isEqualTo("_source_includes=@timestamp,message,log.level,service.name,host.name");
+        assertThat(read.query()).isEqualTo("_source_includes=%40timestamp%2Cmessage%2Clog.level%2Cservice.name%2Chost.name");
+    }
+
+    @Test
+    void theIdIsEncodedOnTheWireAsOnePathSegment() {
+        try (McpSyncClient client = clientWithCredential(PAT)) {
+            McpSchema.CallToolResult result = call(client, "get_document",
+                    Map.of("index", "logs-team-a-2026.10.27", "id", "a:b@c+d=e"));
+
+            assertThat(text(result)).contains("\"error\":\"not_found_or_denied\"");
+        }
+        assertThat(BACKEND.requests().get(1).path()).isEqualTo("/logs-team-a-2026.10.27/_doc/a%3Ab%40c%2Bd%3De");
+        assertThat(BACKEND.requests().get(1).decodedPath()).isEqualTo("/logs-team-a-2026.10.27/_doc/a:b@c+d=e");
     }
 
     @Test
@@ -52,7 +70,19 @@ class GetDocumentToolTest extends ServerTestSupport {
 
             assertThat(result.isError()).as(text(result)).isFalse();
         }
-        assertThat(BACKEND.requests().get(1).path()).isEqualTo("/logs-team-a-2026.10.27/_doc/" + DOC_ID);
+        assertThat(BACKEND.requests().stream().map(StubBackend.Request::path)).containsExactly(
+                "/_resolve/index/logs-team-a-all", "/_resolve/index/logs-team-a-2026.10.27", "/_alias/logs-team-a-all",
+                "/logs-team-a-2026.10.27/_doc/" + DOC_ID);
+    }
+
+    @Test
+    void anAliasWithAFilterOrRoutingIsNotRead() {
+        try (McpSyncClient client = clientWithCredential(PAT)) {
+            McpSchema.CallToolResult result = call(client, "get_document", Map.of("index", "app-filtered", "id", DOC_ID));
+
+            assertThat(text(result)).contains("\"error\":\"not_found_or_denied\"");
+        }
+        assertThat(BACKEND.requests()).noneMatch(r -> r.path().contains("/_doc/"));
     }
 
     @Test
@@ -79,7 +109,9 @@ class GetDocumentToolTest extends ServerTestSupport {
                     .containsExactlyInAnyOrder("index", "id");
             Map<String, Object> properties = properties(schema);
             assertThat(properties.keySet()).containsExactlyInAnyOrder("index", "id");
-            assertThat(properties.get("index")).asInstanceOf(InstanceOfAssertFactories.MAP).containsEntry("maxLength", 255);
+            assertThat(properties.get("index")).asInstanceOf(InstanceOfAssertFactories.MAP).containsEntry("maxLength", 255)
+                    .as("the pattern comes from the contracts, not from a copy in the server")
+                    .containsEntry("pattern", "^(?!\\.{1,2}$)[a-z0-9.][a-z0-9._-]{0,254}$");
             assertThat(properties.get("id")).asInstanceOf(InstanceOfAssertFactories.MAP).containsEntry("maxLength", 256);
         }
     }
@@ -127,17 +159,95 @@ class GetDocumentToolTest extends ServerTestSupport {
             for (String index : new String[] {".security", ".ds-logs-team-a-stream-000001", "_all", "*", "logs-team-a-*",
                     "logs-team-a-1,secret-hr-1", "remote:logs-team-a-1", "<logs-team-a-{now/d}>", "-logs-team-a-1",
                     "Logs-team-a-1", "..", "", "a".repeat(256)}) {
-                assertRejectedArguments(call(client, "get_document", Map.of("index", index, "id", DOC_ID)), "index must");
+                McpSchema.CallToolResult result = call(client, "get_document", Map.of("index", index, "id", DOC_ID));
+
+                assertInvalidArgument(result);
+                if (index.length() > 3) {
+                    assertThat(text(result)).as("the value is not echoed").doesNotContain(index);
+                }
             }
             for (String id : new String[] {"../_search", "a/b", "a?b", "a#b", "a%2Fb", ".", "..", "a b", "", "x".repeat(257)}) {
-                assertRejectedArguments(call(client, "get_document", Map.of("index", "logs-team-a-2026.10.27", "id", id)),
-                        "id must be");
+                McpSchema.CallToolResult result = call(client, "get_document",
+                        Map.of("index", "logs-team-a-2026.10.27", "id", id));
+
+                assertInvalidArgument(result);
+                if (id.length() > 3) {
+                    assertThat(text(result)).as("the value is not echoed").doesNotContain(id);
+                }
             }
-            for (String outside : new String[] {"secret-hr-1", "logs-team-ab-1", "logs"}) {
-                assertThat(text(call(client, "get_document", Map.of("index", outside, "id", DOC_ID))))
-                        .as(outside).contains("\"error\":\"invalid_argument\"", "index prefix served by this server");
-            }
+            assertInvalidArgument(call(client, "get_document", Map.of("index", "logs-team-a-2026.10.27")));
+            assertInvalidArgument(call(client, "get_document",
+                    Map.of("index", "logs-team-a-2026.10.27", "id", DOC_ID, "_source", "*")));
         }
         assertThat(BACKEND.requests()).isEmpty();
+    }
+
+    @Test
+    void anIndexOutsideTheScopeLooksLikeAMissingOne() {
+        try (McpSyncClient client = clientWithCredential(PAT)) {
+            String missing = text(call(client, "get_document", Map.of("index", "logs-team-a-missing", "id", DOC_ID)));
+            assertThat(missing).contains("\"error\":\"not_found_or_denied\"");
+            for (String outside : new String[] {"secret-hr-1", "logs-team-ab-1", "logs"}) {
+                assertThat(text(call(client, "get_document", Map.of("index", outside, "id", DOC_ID)))).as(outside)
+                        .isEqualTo(missing);
+            }
+        }
+        assertThat(BACKEND.requests()).noneMatch(r -> r.decodedPath().startsWith("/secret-hr-1")
+                || r.decodedPath().startsWith("/logs-team-ab-1") || r.decodedPath().contains("/logs/"));
+    }
+
+    @Test
+    void anAliasToAHiddenIndexIsNotRead() {
+        try (McpSyncClient client = clientWithCredential(PAT)) {
+            McpSchema.CallToolResult result = call(client, "get_document", Map.of("index", "app-hidden-target", "id", DOC_ID));
+
+            assertThat(text(result)).contains("\"error\":\"not_found_or_denied\"");
+        }
+        assertThat(BACKEND.requests()).noneMatch(r -> r.path().contains("/_doc/"));
+    }
+
+    @Test
+    void anUnreadableBodyStaysOutOfTheResultAndTheLog(CapturedOutput output) {
+        try (McpSyncClient client = clientWithCredential(PAT)) {
+            McpSchema.CallToolResult result = call(client, "get_document",
+                    Map.of("index", "logs-team-a-2026.10.27", "id", "doc-badjson"));
+
+            assertThat(text(result)).contains("\"error\":\"internal_error\"").doesNotContain(StubBackend.BODY_MARKER);
+        }
+        assertThat(output.getAll()).contains("BackendResponseException").doesNotContain(StubBackend.BODY_MARKER);
+    }
+
+    @Test
+    void aRedirectIsNotFollowedAndNotReadAsMissing() {
+        try (McpSyncClient client = clientWithCredential(PAT)) {
+            McpSchema.CallToolResult result = call(client, "get_document",
+                    Map.of("index", "logs-team-a-2026.10.27", "id", "doc-302"));
+
+            assertThat(text(result)).contains("\"error\":\"internal_error\"");
+        }
+        assertThat(BACKEND.elsewhereHits()).as("the credential must not follow the Location").isEmpty();
+    }
+
+    @Test
+    void aSlowBackendTimesOut() {
+        try (McpSyncClient client = clientWithCredential(PAT)) {
+            long start = System.nanoTime();
+            McpSchema.CallToolResult result = call(client, "get_document",
+                    Map.of("index", "logs-team-a-2026.10.27", "id", "doc-slow"));
+
+            assertThat(text(result)).contains("\"error\":\"upstream_unavailable\"");
+            assertThat(java.time.Duration.ofNanos(System.nanoTime() - start))
+                    .isLessThan(java.time.Duration.ofMillis(StubBackend.SLOW_MILLIS));
+        }
+    }
+
+    @Test
+    void anOversizedBodyIsCutOff() {
+        try (McpSyncClient client = clientWithCredential(PAT)) {
+            McpSchema.CallToolResult result = call(client, "get_document",
+                    Map.of("index", "logs-team-a-2026.10.27", "id", "doc-huge"));
+
+            assertThat(text(result)).contains("\"error\":\"internal_error\"");
+        }
     }
 }

@@ -38,6 +38,9 @@ opensearch:
     ssl-bundle: ${MCP_OPENSEARCH_SSL_BUNDLE:}
     connect-timeout: 2s
     read-timeout: 10s
+    max-response-size: 1MB
+    # Plain http outside 'dev' only for the mocks of mcp-platform-dev; never in a real deployment.
+    allow-plain-http: ${MCP_OPENSEARCH_ALLOW_PLAIN_HTTP:false}
   # Index prefixes the server may touch at all (comma-separated). Starter beta narrows them further per caller
   # with QueryScope; the server does not start without at least one.
   scope:
@@ -52,7 +55,7 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,prometheus
+        include: health
   endpoint:
     health:
       probes:
