@@ -3,6 +3,7 @@ package pl.aiwcorpo.mcp.opensearch.app;
 import io.modelcontextprotocol.client.McpClient;
 import io.modelcontextprotocol.client.McpSyncClient;
 import io.modelcontextprotocol.client.transport.HttpClientStreamableHttpTransport;
+import io.modelcontextprotocol.client.transport.customizer.McpSyncHttpClientRequestCustomizer;
 import io.modelcontextprotocol.spec.McpSchema;
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -41,6 +42,7 @@ abstract class ServerTestSupport {
     static void environment(DynamicPropertyRegistry registry) {
         GATEWAY.serverProperties().forEach((name, value) -> registry.add(name, () -> value));
         registry.add("opensearch.backend.base-url", BACKEND::baseUrl);
+        registry.add("opensearch.scope.allowed-index-prefixes", () -> "logs-team-a,app");
     }
 
     @LocalServerPort
@@ -52,10 +54,21 @@ abstract class ServerTestSupport {
 
     /** An MCP client that reaches the server the way the gateway does, with {@code credential} as C3 header. */
     McpSyncClient clientWithCredential(String credential) {
+        return clientWithCredential(credential, "user-secret");
+    }
+
+    /** As {@link #clientWithCredential(String)}, with another {@code X-MCP-Credential-Type} (C3). */
+    McpSyncClient clientWithCredential(String credential, String credentialType) {
+        McpSyncHttpClientRequestCustomizer gateway = GATEWAY.asGateway(user -> user.username("jkowalski"), credential);
         HttpClientStreamableHttpTransport transport = HttpClientStreamableHttpTransport.builder(baseUrl())
                 .endpoint(ENDPOINT)
                 .openConnectionOnStartup(false)
-                .httpRequestCustomizer(GATEWAY.asGateway(user -> user.username("jkowalski"), credential))
+                .httpRequestCustomizer((request, method, uri, body, context) -> {
+                    gateway.customize(request, method, uri, body, context);
+                    if (credential != null) {
+                        request.setHeader("X-MCP-Credential-Type", credentialType);
+                    }
+                })
                 .build();
         McpSyncClient client = McpClient.sync(transport).requestTimeout(Duration.ofSeconds(20)).build();
         client.initialize();
@@ -92,6 +105,24 @@ abstract class ServerTestSupport {
 
     static McpSchema.CallToolResult call(McpSyncClient client, String tool, Map<String, Object> arguments) {
         return client.callTool(McpSchema.CallToolRequest.builder(tool).arguments(arguments).build());
+    }
+
+    /**
+     * The MCP SDK checks arguments against the input schema before the tool runs and answers with its own text
+     * ("input validation failed"), not a C10 error; arguments that pass the schema reach the tool's own checks
+     * ({@code invalid_argument}). Either way the call is refused before the backend.
+     */
+    static void assertRejectedArguments(McpSchema.CallToolResult result, String toolMessage) {
+        assertThat(result.isError()).isTrue();
+        String text = text(result);
+        if (!text.contains("input validation failed")) {
+            assertThat(text).contains("\"error\":\"invalid_argument\"", toolMessage);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    static Map<String, Object> properties(Map<String, Object> inputSchema) {
+        return (Map<String, Object>) inputSchema.get("properties");
     }
 
     static String text(McpSchema.CallToolResult result) {

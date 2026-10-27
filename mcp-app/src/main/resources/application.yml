@@ -38,6 +38,15 @@ opensearch:
     ssl-bundle: ${MCP_OPENSEARCH_SSL_BUNDLE:}
     connect-timeout: 2s
     read-timeout: 10s
+  # Index prefixes the server may touch at all (comma-separated). Starter beta narrows them further per caller
+  # with QueryScope; the server does not start without at least one.
+  scope:
+    allowed-index-prefixes: ${MCP_OPENSEARCH_INDEX_PREFIXES:}
+  search:
+    timestamp-field: ${MCP_OPENSEARCH_TIMESTAMP_FIELD:@timestamp}
+    query-fields: ${MCP_OPENSEARCH_QUERY_FIELDS:message}
+    result-fields: ${MCP_OPENSEARCH_RESULT_FIELDS:@timestamp,message,log.level,service.name,host.name}
+    max-range: ${MCP_OPENSEARCH_MAX_RANGE:7d}
 
 management:
   endpoints:

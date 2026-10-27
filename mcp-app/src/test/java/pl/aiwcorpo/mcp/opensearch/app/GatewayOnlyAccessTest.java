@@ -17,7 +17,8 @@ import pl.aiwcorpo.mcp.platform.test.TestGateway;
 class GatewayOnlyAccessTest extends ServerTestSupport {
 
     private static final String GET_RECORD = """
-            {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_record","arguments":{"recordId":"ABC-1"}}}""";
+            {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_document",
+            "arguments":{"index":"logs-team-a-2026.10.27","id":"Xk3n8ZIBdLrT0q1aHf2p"}}}""";
 
     private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
 
@@ -44,16 +45,16 @@ class GatewayOnlyAccessTest extends ServerTestSupport {
 
     @Test
     void aTokenForAnotherServerToolOrRequestIsRejected() throws Exception {
-        TestGateway.Minted otherServer = GATEWAY.user().tool("get_record").audience(anotherServerId()).mint();
+        TestGateway.Minted otherServer = GATEWAY.user().tool("get_document").audience(anotherServerId()).mint();
         assertThat(post(GET_RECORD, otherServer.headers()).statusCode()).isEqualTo(401);
 
-        TestGateway.Minted otherTool = GATEWAY.user().tool("search_records").mint();
+        TestGateway.Minted otherTool = GATEWAY.user().tool("search_logs").mint();
         assertThat(post(GET_RECORD, otherTool.headers()).statusCode()).isEqualTo(401);
 
         TestGateway.Minted service = GATEWAY.service().mint();
         assertThat(post(GET_RECORD, service.headers()).statusCode()).isEqualTo(401);
 
-        TestGateway.Minted expired = GATEWAY.user().tool("get_record")
+        TestGateway.Minted expired = GATEWAY.user().tool("get_document")
                 .issuedAt(Instant.now().minusSeconds(300)).mint();
         assertThat(post(GET_RECORD, expired.headers()).statusCode()).isEqualTo(401);
         assertThat(BACKEND.authorizations()).isEmpty();
