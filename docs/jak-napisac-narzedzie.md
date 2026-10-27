@@ -11,11 +11,18 @@ do modelu, który może go potraktować jak instrukcję. Wzorcami są `search_lo
 3. `mcp-integration`: wywołanie systemu w adapterze. Poświadczenie zawsze z
    `CredentialContext.require(SYSTEM)` i `credential::applyTo`; dla nagłówka innego niż `Authorization`
    (np. `PRIVATE-TOKEN` GitLaba) `credential.value()`. 404 i 403 systemu -> pusty wynik (jeden kod
-   `not_found_or_denied`), 401 -> `CredentialRequiredException(SYSTEM)`. Odpowiedź do prywatnego DTO z
-   `@JsonIgnoreProperties(ignoreUnknown = true)`, potem do domeny.
+   `not_found_or_denied`), 401 -> `CredentialRequiredException(SYSTEM)`, 3xx i odpowiedź, której nie da się
+   użyć (nie parsuje się, brak `id`, za duża) -> `BackendResponseException` ze stałym tekstem i bez przyczyny
+   (komunikat parsera cytuje treść odpowiedzi). Odpowiedź do prywatnego DTO z
+   `@JsonIgnoreProperties(ignoreUnknown = true)`, potem do domeny; brak wymaganych pól to błąd systemu, nie
+   `IllegalArgumentException` (to byłby `invalid_argument`, czyli wina modelu).
 4. `mcp-tools`: cienka metoda `@Tool` z `@ToolRisk`, walidacją argumentów i wywołaniem przypadku użycia;
-   mapowanie wyjątku domeny na kod C10 w `OpenSearchToolErrors`.
-5. `mcp-app`: dopisanie beana narzędzia w `McpToolsConfiguration` (jawna lista; sam `@Tool` nie wystarczy),
+   mapowanie wyjątku domeny na kod C10 w `OpenSearchToolErrors`. Każdy argument tekstowy ma
+   `@ArgumentLimits(maxLength = ..., pattern = "^...$")` z tymi samymi stałymi, których używa walidacja w kodzie
+   (wzorzec: `OpenSearchTools.INDEX_PATTERN_REGEX`); limity trafiają do `inputSchema`, więc widzą je gateway i
+   manifest C6. `pattern` w JSON Schema nie jest kotwiczony: zawsze `^` i `$`.
+5. `mcp-app`: dopisanie beana narzędzia w `McpToolsConfiguration` przez `SchemaLimitedToolCallbacks.of(...)`
+   (jawna lista; sam `@Tool` nie wystarczy, a `MethodToolCallbackProvider` pominąłby `@ArgumentLimits`),
    test w `mcp-app/src/test` przez `ServerTestSupport`, odpowiedź systemu w `StubBackend`.
 6. `docs/api/tools-catalog.md` i tabela narzędzi w README.
 
@@ -30,8 +37,13 @@ do modelu, który może go potraktować jak instrukcję. Wzorcami są `search_lo
   narzędzie potrzebuje filtrów, to są osobne, ograniczone pola (status, typ, przypisany) parsowane i
   składane przez serwer z escapowaniem.
 - Walidacja przed systemem. Wzorzec i długość identyfikatora, limity wielkości (`size <= 100`),
-  zamknięte listy wartości. Błąd walidacji to `InvalidToolArgumentException` z własnym tekstem (starter oddaje
-  go jako `invalid_argument`); nigdy z treścią odpowiedzi systemu.
+  zamknięte listy wartości. Błąd walidacji to `InvalidToolArgumentException` ze stałym tekstem opisującym
+  format (starter oddaje go jako `invalid_argument`): nigdy z wartością argumentu (C10: komunikat nie zawiera
+  wartości argumentów) i nigdy z treścią odpowiedzi systemu. Opublikowany schemat egzekwuje starter (od alpha-6: C10
+  `invalid_argument` i zdarzenie C8, bez nazw i wartości argumentów); walidacja w kodzie zostaje jako druga linia.
+- Segmenty ścieżki. Szablon URI `RestClient` koduje `/`, `?`, `#`, ale wartości `.` i `..` zostają segmentami
+  ścieżki (`/{index}/_doc/..`). Wzorzec identyfikatora musi je wykluczać (np. pierwszy znak alfanumeryczny);
+  argumenty będące ścieżką (GitLab `get_file`) wymagają osobnej normalizacji i odrzucenia `..`.
 - Błędy tylko przez kody C10. Wyjątek domeny -> `ToolErrorMapping` -> `SafeError` z kodem z
   `ToolErrorCode`. Gotowy `SanitizedToolException` wolno rzucić, gdy narzędzie samo zna kod. Inne wyjątki
   starter zamienia na `internal_error`; komunikat nie zawiera odpowiedzi systemu, nagłówków ani sekretów.

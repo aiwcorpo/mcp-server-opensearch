@@ -2,8 +2,9 @@
 
 Narzędzia to powierzchnia publiczna serwera. Każda zmiana nazwy, opisu, schematu albo ryzyka zmienia
 `definitionHash` (C6) i wymaga ponownego zatwierdzenia w gateway'u, więc przechodzi przez code review razem z
-tą tabelą. Schematy wejścia są pisane ręcznie w `OpenSearchToolSchemas` (limity, wzorce,
-`additionalProperties: false`).
+tą tabelą. Schematy wejścia powstają z `@ArgumentLimits` na parametrach `OpenSearchTools` i
+`SchemaLimitedToolCallbacks.of(...)` ze startera (limity, wzorce, `additionalProperties: false`); wzorzec `index`
+pochodzi z definicji `OpenSearchIndexName` kontraktów.
 
 | Narzędzie (klient widzi `opensearch__<nazwa>`) | Ryzyko | Akcja (C6) | Argumenty | Zasób (C7) | Uprawnienie (C9) | Poświadczenie |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -14,11 +15,11 @@ Błędy (C10):
 
 | Sytuacja | Kod |
 | --- | --- |
-| zły argument, wzorzec z `,` `:` `<` `-` `_all` `*` `.`, prefiks spoza konfiguracji, data stream, alias kilku indeksów w `get_document` | `invalid_argument` (dla naruszeń schematu tekst SDK MCP, "input validation failed") |
-| indeks lub dokument nie istnieje, 403 OpenSearch, alias z celem poza prefiksami, indeks ukryty | `not_found_or_denied` (ten sam tekst) |
+| zły argument (naruszenie schematu sprawdza starter, resztę narzędzie): wzorzec z `,` `:` `<` `-` `_all` `*` `.`, nadmiarowy argument, data stream, alias kilku indeksów w `get_document` | `invalid_argument` (bez nazwy i wartości argumentu) |
+| indeks lub dokument nie istnieje, nazwa poprawna, ale poza prefiksami serwera, 403 OpenSearch, alias z celem poza prefiksami albo z celem ukrytym, alias z filtrem lub routingiem w `get_document`, indeks ukryty | `not_found_or_denied` (ten sam tekst) |
 | brak poświadczenia, 401 OpenSearch, `service-account`, schemat inny niż `Bearer`/`Basic` | `credential_required` |
-| OpenSearch nieosiągalny, 502/503/504 | `upstream_unavailable` |
-| reszta (np. 500) | `internal_error` |
+| OpenSearch nieosiągalny, 502/503/504, przekroczony czas | `upstream_unavailable` |
+| reszta (np. 500), przekierowanie, odpowiedź nieczytelna albo większa niż `max-response-size` | `internal_error` |
 
 Konwencje: nazwy `snake_case`, czasownik i obiekt, bez prefiksu systemu (dokłada go gateway); opis mówi, co
 narzędzie zwraca, bez instrukcji dla modelu. Nazwy argumentów `search_logs` są z briefu ws-04
