@@ -1,0 +1,18 @@
+# Build
+target/
+!.mvn/wrapper/maven-wrapper.jar
+*.class
+# IDE
+.idea/
+*.iml
+.vscode/
+# Secrets / TLS material, never committed
+*.p12
+*.jks
+*.pem
+*.key
+*.crt
+**/mcp-*.env
+!deploy/systemd/mcp-*.env.template
+# Logs
+*.log

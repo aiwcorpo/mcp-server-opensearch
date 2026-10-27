@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  mcp-tools: inbound adapter, the @Tool methods. This is the public attack surface of the server:
+  thin methods that validate arguments, call a use case and return only the fields the caller needs.
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>pl.aiwcorpo.mcp.opensearch</groupId>
+        <artifactId>mcp-opensearch-parent</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+    </parent>
+    <artifactId>mcp-tools</artifactId>
+    <name>mcp-opensearch :: Tools (inbound MCP adapter)</name>
+    <dependencies>
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>mcp-application</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>pl.aiwcorpo.mcp</groupId>
+            <artifactId>mcp-platform-starter</artifactId>
+        </dependency>
+    </dependencies>
+</project>

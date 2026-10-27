@@ -1,0 +1,5 @@
+# Tests and local runs only: plain HTTP on loopback. Server id, JWKS, test keys, in-memory jti store and
+# mtls.required=false come from TestGateway.serverProperties(); the starter accepts them only with 'dev'.
+server:
+  address: 127.0.0.1
+  port: ${MCP_PORT:8080}

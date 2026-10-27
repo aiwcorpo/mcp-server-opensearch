@@ -1,0 +1,87 @@
+package pl.aiwcorpo.mcp.opensearch.app;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.Map;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import pl.aiwcorpo.mcp.platform.test.TestGateway;
+
+/** Only the gateway gets in: no internal JWT, or one not meant for this call, is 401 and never anonymous. */
+class GatewayOnlyAccessTest extends ServerTestSupport {
+
+    private static final String GET_RECORD = """
+            {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_record","arguments":{"recordId":"ABC-1"}}}""";
+
+    private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
+
+    @BeforeEach
+    void resetBackend() {
+        BACKEND.reset();
+    }
+
+    @Test
+    void withoutJwtEveryMcpRequestIs401() throws Exception {
+        HttpResponse<String> call = post(GET_RECORD, Map.of("X-MCP-Credential", "Bearer stolen-pat",
+                "X-MCP-Credential-Type", "user-secret"));
+        assertThat(call.statusCode()).isEqualTo(401);
+        assertThat(call.headers().firstValue("WWW-Authenticate")).hasValue("Bearer");
+        assertThat(call.body()).contains("\"error\":\"unauthenticated\"").doesNotContain("stolen-pat");
+
+        assertThat(post("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\"}", Map.of()).statusCode()).isEqualTo(401);
+        assertThat(post("""
+                {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18",
+                "capabilities":{},"clientInfo":{"name":"intruder","version":"1"}}}""", Map.of()).statusCode())
+                .isEqualTo(401);
+        assertThat(BACKEND.authorizations()).isEmpty();
+    }
+
+    @Test
+    void aTokenForAnotherServerToolOrRequestIsRejected() throws Exception {
+        TestGateway.Minted otherServer = GATEWAY.user().tool("get_record").audience(anotherServerId()).mint();
+        assertThat(post(GET_RECORD, otherServer.headers()).statusCode()).isEqualTo(401);
+
+        TestGateway.Minted otherTool = GATEWAY.user().tool("search_records").mint();
+        assertThat(post(GET_RECORD, otherTool.headers()).statusCode()).isEqualTo(401);
+
+        TestGateway.Minted service = GATEWAY.service().mint();
+        assertThat(post(GET_RECORD, service.headers()).statusCode()).isEqualTo(401);
+
+        TestGateway.Minted expired = GATEWAY.user().tool("get_record")
+                .issuedAt(Instant.now().minusSeconds(300)).mint();
+        assertThat(post(GET_RECORD, expired.headers()).statusCode()).isEqualTo(401);
+        assertThat(BACKEND.authorizations()).isEmpty();
+    }
+
+    @Test
+    void onlyTheHealthEndpointAnswersWithoutJwt() throws Exception {
+        assertThat(get("/actuator/health").statusCode()).isEqualTo(200);
+        assertThat(get("/actuator/prometheus").statusCode()).isEqualTo(401);
+    }
+
+    /** A real platform server id that is not this one (the template generates each of them). */
+    private static String anotherServerId() {
+        return SERVER_ID.equals("mcp-gitlab") ? "mcp-confluence" : "mcp-gitlab";
+    }
+
+    private HttpResponse<String> post(String body, Map<String, String> headers) throws Exception {
+        HttpRequest.Builder request = HttpRequest.newBuilder(URI.create(baseUrl() + ENDPOINT))
+                .timeout(Duration.ofSeconds(15))
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json, text/event-stream")
+                .POST(HttpRequest.BodyPublishers.ofString(body));
+        headers.forEach(request::header);
+        return http.send(request.build(), HttpResponse.BodyHandlers.ofString());
+    }
+
+    private HttpResponse<String> get(String path) throws Exception {
+        return http.send(HttpRequest.newBuilder(URI.create(baseUrl() + path)).GET().build(),
+                HttpResponse.BodyHandlers.ofString());
+    }
+}
