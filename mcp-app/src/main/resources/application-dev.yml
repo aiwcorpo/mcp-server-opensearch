@@ -1,5 +1,5 @@
-# Tests and local runs without the platform environment: plain HTTP on loopback, no Redis, no certificates.
-# The starter accepts these relaxations only when 'dev' is the one active profile. Tests override the JWKS,
+# Tests and local runs without the platform environment. In 'dev', the one active profile, the starter itself
+# turns off TLS, mTLS and the Redis replay store, so none of that is set here. Tests override the JWKS,
 # server id and connect URL with TestGateway.serverProperties().
 server:
   address: 127.0.0.1
@@ -12,9 +12,6 @@ aiwcorpo:
         # No gateway runs locally, so every call with a JWT ends 503 (JWKS unavailable); without a JWT it is 401.
         jwks-uri: ${MCP_GATEWAY_JWKS_URI:http://127.0.0.1:18445/.well-known/jwks.json}
         allow-test-keys: true
-        replay-store: memory
-      mtls:
-        required: false
       credential:
         connect-url: ${MCP_CONNECT_URL:http://localhost:18090/connections?system={system}}
 
