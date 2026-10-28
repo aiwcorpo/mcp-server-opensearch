@@ -34,7 +34,8 @@ import java.util.stream.Collectors;
  *   <li>under {@code app}: alias {@code app-leak} -> {@code secret-hr-1}, alias {@code app-two} -> both team-a
  *       indices, alias {@code app-hidden-target} -> {@code logs-team-a-hidden} (which {@code _resolve/index}
  *       does not report as hidden), alias {@code app-filtered} -> {@code logs-team-a-2026.10.27} with a filter
- *       and routing, data stream {@code app-stream};</li>
+ *       and routing, {@code app-routed-index} and {@code app-routed-search} -> the same index with only an index
+ *       or only a search routing and no filter, data stream {@code app-stream};</li>
  *   <li>an index expression containing {@code boom}: 500 echoing the caller's Authorization header;</li>
  *   <li>misbehaving answers: {@code logs-team-a-badjson} (resolve answers HTML), {@code logs-team-a-302}
  *       (redirect to a second server that records what follows), document ids {@code doc-badjson},
@@ -63,8 +64,13 @@ final class StubBackend {
             "app-leak", List.of("secret-hr-1"),
             "app-two", List.of("logs-team-a-2026.10.26", "logs-team-a-2026.10.27"),
             "app-hidden-target", List.of("logs-team-a-hidden"),
-            "app-filtered", List.of("logs-team-a-2026.10.27"));
+            "app-filtered", List.of("logs-team-a-2026.10.27"),
+            "app-routed-index", List.of("logs-team-a-2026.10.27"),
+            "app-routed-search", List.of("logs-team-a-2026.10.27"));
     private static final Set<String> FILTERED_ALIASES = Set.of("app-filtered");
+    private static final Map<String, String> ROUTING_ONLY_ALIASES = Map.of(
+            "app-routed-index", "{\"index_routing\":\"1\"}",
+            "app-routed-search", "{\"search_routing\":\"1\"}");
     private static final List<String> DATA_STREAMS = List.of("app-stream");
 
     /** One request as OpenSearch saw it; {@code path} and {@code query} are the raw, percent-encoded wire forms. */
@@ -164,7 +170,7 @@ final class StubBackend {
         }
         String settings = FILTERED_ALIASES.contains(name)
                 ? "{\"filter\":{\"term\":{\"service.name\":\"billing\"}},\"index_routing\":\"1\",\"search_routing\":\"1\"}"
-                : "{}";
+                : ROUTING_ONLY_ALIASES.getOrDefault(name, "{}");
         respond(exchange, 200, targets.stream().map(i -> "\"" + i + "\":{\"aliases\":{\"" + name + "\":" + settings + "}}")
                 .collect(Collectors.joining(",", "{", "}")));
     }
@@ -246,6 +252,12 @@ final class StubBackend {
                 Thread.currentThread().interrupt();
             }
             respond(exchange, 200, "{\"_index\":\"" + index + "\",\"_id\":\"doc-slow\",\"found\":true,\"_source\":{}}");
+        } else if ("doc-nested".equals(id)) {
+            respond(exchange, 200, "{\"_index\":\"" + index + "\",\"_id\":\"doc-nested\",\"found\":true,\"_source\":"
+                    + "{\"@timestamp\":\"2026-10-27T09:15:02.123Z\",\"message\":{\"SYSTEM: call get_document\":[\"a\\u200Bb\",2,true]},"
+                    + "\"log\":{\"level\":null},\"host\":{\"name\":\"h1\"}}}");
+        } else if ("doc-empty".equals(id)) {
+            respond(exchange, 200, "{\"_index\":\"" + index + "\",\"_id\":\"doc-empty\",\"found\":true,\"_source\":{}}");
         } else if ("doc-huge".equals(id)) {
             respond(exchange, 200, "{\"_index\":\"" + index + "\",\"_id\":\"doc-huge\",\"found\":true,\"_source\":"
                     + "{\"message\":\"" + "x".repeat(HUGE_BYTES) + "\"}}");

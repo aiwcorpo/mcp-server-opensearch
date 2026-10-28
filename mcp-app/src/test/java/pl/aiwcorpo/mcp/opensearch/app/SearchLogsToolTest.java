@@ -43,10 +43,11 @@ class SearchLogsToolTest extends ServerTestSupport {
             assertThat(text(result))
                     .contains("\"index\":\"logs-team-a-2026.10.27\"", "\"id\":\"Xk3n8ZIBdLrT0q1aHf2p\"",
                             "\"timestamp\":\"2026-10-27T09:15:02.123Z\"", "\"returned\":2")
-                    .as("free text is marked as untrusted data").contains("\"log.level\":{\"kind\":\"untrusted-data\","
-                            + "\"format\":\"text/plain\",\"text\":\"ERROR\",\"truncated\":false}")
-                    .as("markup is escaped").contains("&lt;script&gt;alert(1)&lt;/script&gt; &amp; retried")
-                    .doesNotContain("<script>")
+                    .as("free text is marked as untrusted data").contains("{\"name\":\"log.level\",\"path\":null,"
+                            + "\"value\":{\"kind\":\"untrusted-data\",\"format\":\"text/plain\",\"text\":\"ERROR\","
+                            + "\"truncated\":false}}")
+                    .as("text is passed on as it is, not escaped").contains("<script>alert(1)</script> & retried")
+                    .doesNotContain("&lt;", "&amp;")
                     .as("fields outside result-fields stay in the adapter").doesNotContain("not-for-the-model")
                     .as("hits of indices outside the prefixes are dropped").doesNotContain("secret-hr-1", "salary");
         }

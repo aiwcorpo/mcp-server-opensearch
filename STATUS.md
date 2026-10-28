@@ -1,10 +1,33 @@
 # STATUS - mcp-server-opensearch (ws-04)
 
-M1: osiągnięty (2026-10-27, runda 2) - `search_logs` i `get_document` (READ_ONLY) na starterze 3.0.0-alpha-6, walidacja argumentów przez starter (C10), jeden wzorzec indeksu od prefiksu z konfiguracji, aliasy rozwiązywane i sprawdzane (cele ukryte, filtr), poświadczenie z C3, 56 testów na stubie OpenSearch 2.x.
+M1: osiągnięty (2026-10-27, runda 2; 2026-10-28 przeniesiony na starter 3.0.0-alpha-10) - `search_logs` i `get_document` (READ_ONLY) na starterze 3.0.0-alpha-10, walidacja argumentów przez starter (C10), jeden wzorzec indeksu od prefiksu z konfiguracji, aliasy rozwiązywane i sprawdzane (cele ukryte, filtr), poświadczenie z C3, 69 testów na stubie OpenSearch 2.x.
 
-Starter: BOM `pl.aiwcorpo.mcp:mcp-platform-bom:3.0.0-alpha-6` (kontrakty 2.0.2, Spring Boot 4.1.0, Spring AI
+Starter: BOM `pl.aiwcorpo.mcp:mcp-platform-bom:3.0.0-alpha-10` (kontrakty 2.1.1, Spring Boot 4.1.0, Spring AI
 2.0.0, Java 25). Repo wygenerowane `new-server.sh opensearch` z template'u 7f65f8f (pierwszy commit); zmiany template'u do c1258c4
 przeniesione w rundzie 2. M2 nie jest zaczęty.
+
+## Migracja na starter 3.0.0-alpha-10 (2026-10-28)
+
+BOM alpha-6 -> alpha-10 (kontrakty 2.1.1). Źródło: `MIGRATION-3.0.md`, alpha-7 do alpha-10. M2 nie jest zaczęty.
+
+| Punkt | Status |
+| --- | --- |
+| Wynik jako rekord z `UntrustedText` startera, bez `Map`/`Object` | zrobione z przebudową kształtu: `data` było `Map<String, Object>`, a generator `outputSchema` startera przyjmuje tylko rekordy, listy i skalary. Teraz `data` to lista `LogField{name, path, value}` (obiekty i listy spłaszczone do liści, `path` z nazwą z dokumentu jako `UntrustedText`, liczby i wartości logiczne jako tekst JSON). Zmiana kształtu wyniku dla klienta, `definitionHash` zmieniony i tak przez `outputSchema`. Własny `UntrustedText` usunięty; `mcp-core` zależy od startera tylko dla tego typu |
+| `@Nullable` na polach, które system może zostawić puste | `LogHit.id`/`timestamp`, `IndexDocument.id`, `DocumentResult.id`, `LogField.path` |
+| Kolejność tekstu i spójna obsługa (wspólne 1 z rundy 2) | `UntrustedValues`: tekst, `normalize`, `cut`, `plainCut`; escapowanie `<`, `>`, `&` usunięte (klient nie renderuje HTML, ta sama reguła co gitlab i servicedesk). Test: `<script>alert(1)</script> & retried` wychodzi bez zmiany |
+| O2-L2 (klucze obiektów i `id` poza `UntrustedText`) | zamknięte: nazwy z dokumentu w `path` jako `UntrustedText`; `id` tylko w kształcie `get_document` (inaczej `null`), `timestamp` tylko data lub liczba |
+| Limit wyniku 1 MB (A9) | `search_logs` ma budżet 250000 znaków tekstu (`SearchLogsResult.of`), po przekroczeniu `truncated: true` i reszta trafień pominięta; do 100 wpisów na dokument; testy `SearchLogsResultTest`, `UntrustedValuesTest` |
+| Limity na każdym poziomie schematu | bez zmian: `@ArgumentLimits` na wszystkich argumentach (`size` z `minimum`/`maximum`), wzorce zakotwiczone, brak `|` |
+| CC-074: `get_document` bez wiodącej kropki we wzorcu | `contractPattern = "OpenSearchIndexName"` publikuje od 2.1.1 `^[a-z0-9][a-z0-9._-]{0,254}$` (test `isListedAsReadOnlyWithAClosedSchema`); własny filtr kropki w narzędziu i kopia wzorca usunięte, wzorzec czytany z kontraktu. `.security` dalej `invalid_argument` (istniejące testy) |
+| O2-L1 test routingu aliasu | `anAliasWithOnlyARoutingIsNotRead`: aliasy `app-routed-index` i `app-routed-search` (sam routing, bez filtra) w stubie, `get_document` -> `not_found_or_denied` bez odczytu `_doc` |
+| `tool_failed` domenowe na INFO | `ToolFailureLogLevelTest`; testów oczekujących ERROR nie było |
+| `dev` i obejścia w `application-dev.yml` | usunięte `replay-store: memory` i `mtls.required: false`; `SPRING_PROFILES_ACTIVE=dev` tylko w poleceniu README; `overridden=[]` w logu |
+| Własne beany polityki i audytu | brak |
+| Claimy `vs` i `vsc:{}` | `GatewayLinkClaimsTest` |
+| Zgodność z mockiem ws-01 | mocka OpenSearch nie ma (STATUS wyżej); stub bez zmian w kształtach odpowiedzi |
+
+Weryfikacja: `./mvnw -B clean verify` (JDK 25) -> 69 testów, 0 błędów (mcp-app 55, mcp-application 8, mcp-integration 4,
+mcp-tools 2). Uruchomienie wg README: `dev` na 18541, health 200, `POST /mcp` bez JWT 401; proces zatrzymany.
 
 ## Co działa
 
@@ -32,7 +55,7 @@ przeniesione w rundzie 2. M2 nie jest zaczęty.
   obowiązkowy, `to > from`, najwyżej `MCP_OPENSEARCH_MAX_RANGE` (7 dni); bez `_msearch`, `_mget`, skryptów,
   `?q=`, agregacji, liczby wszystkich trafień.
 - Wynik: tylko pola z `MCP_OPENSEARCH_RESULT_FIELDS` (jako `_source.includes` i ponownie w adapterze), każdy
-  napis w `data` jako `UntrustedText` (CC-072), `<`, `>`, `&` escapowane, limity długości i rozmiaru.
+  napis w `data` jako `UntrustedText` (CC-072, bez escapowania od alpha-10), limity długości, liczby wpisów i rozmiaru.
 - Adapter jak w template'ie: `https` poza `dev` (wyjątek `MCP_OPENSEARCH_ALLOW_PLAIN_HTTP`), bez userinfo/query w
   adresie, bez przekierowań (3xx to `internal_error`, nie "brak"), `max-response-size` 1 MB,
   `BackendResponseException` bez treści, prometheus niewystawiony.

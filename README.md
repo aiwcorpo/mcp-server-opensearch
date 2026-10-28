@@ -1,7 +1,7 @@
 # mcp-opensearch: serwer MCP platformy
 
-Serwer MCP dla systemu `opensearch`, zbudowany na `mcp-platform-starter` 3.0.0-alpha-6 (Java 25, Spring Boot
-4.1.0, Spring AI 2.0.0, kontrakty `mcp-contracts` 2.0.2). Stoi wyłącznie za gateway'em platformy: przyjmuje
+Serwer MCP dla systemu `opensearch`, zbudowany na `mcp-platform-starter` 3.0.0-alpha-10 (Java 25, Spring Boot
+4.1.0, Spring AI 2.0.0, kontrakty `mcp-contracts` 2.1.1). Stoi wyłącznie za gateway'em platformy: przyjmuje
 ruch tylko po mTLS z wewnętrznym JWT gateway'a (C2), a do systemu docelowego woła z poświadczeniem
 użytkownika, które gateway dołącza do każdego żądania (C3). Bez poprawnego JWT odpowiada 401, nie ma trybu
 anonimowego.
@@ -26,7 +26,7 @@ JWKS z kluczy testowych kontraktów i podpisuje wewnętrzne JWT, a `StubBackend`
 | --- | --- | --- |
 | `mcp-core` | domena i porty, czysta Java | `IndexScope` (prefiksy, granica na `-`), `IndexPattern`, `LogQuery`, `LogHit`, `IndexDocument`, `ResolvedIndices`, wyjątki domeny; port wejściowy `OpenSearchUseCase`, porty wyjściowe `OpenSearchPort` i `IndexScopeProvider` |
 | `mcp-application` | przypadki użycia (bez Springa) | `OpenSearchService`: zakres, rozwiązywanie aliasów, odrzucanie wyników spoza zakresu |
-| `mcp-integration` | adaptery wyjściowe do systemu | `OpenSearchAdapter` (REST, poświadczenie z C3, timeouty, bez przekierowań, `https` poza `dev`, budowa zapytania), `BoundedBodyInterceptor` (limit rozmiaru odpowiedzi), `BackendResponseException` (odpowiedź bez treści w komunikacie), `ConfiguredIndexScopeProvider`, `UntrustedValues` (escapowanie i limity treści), właściwości `opensearch.*` |
+| `mcp-integration` | adaptery wyjściowe do systemu | `OpenSearchAdapter` (REST, poświadczenie z C3, timeouty, bez przekierowań, `https` poza `dev`, budowa zapytania), `BoundedBodyInterceptor` (limit rozmiaru odpowiedzi), `BackendResponseException` (odpowiedź bez treści w komunikacie), `ConfiguredIndexScopeProvider`, `UntrustedValues` (spłaszczenie wartości do wpisów, normalizacja, limity), właściwości `opensearch.*` |
 | `mcp-tools` | narzędzia MCP, powierzchnia publiczna | `OpenSearchTools` (`search_logs`, `get_document`, `@ArgumentLimits` na argumentach), `OpenSearchToolErrors` (wyjątki domeny -> kody C10) |
 | `mcp-app` | bootstrap, wiring, jedyny jar, testy end-to-end | `McpServerApplication`, `McpToolsConfiguration` (lista narzędzi przez `SchemaLimitedToolCallbacks.of(...)` ze startera), `ApplicationWiringConfiguration` |
 
@@ -38,8 +38,8 @@ całość. Resolver zasobów (`@ResourceRef`, starter beta) dojdzie w `mcp-integ
 
 | Narzędzie | Ryzyko | Uprawnienie (C9) | Poświadczenie | Argumenty | Wynik |
 | --- | --- | --- | --- | --- | --- |
-| `search_logs` | `READ_ONLY` | `mcp-opensearch-read` (+ zakres `mcp-opensearch-idx-<prefiks>` od M3) | `user-secret` w M1 (docelowo `token-exchange`), `Authorization: Bearer` albo `Basic` | `index_pattern` (jeden wzorzec `^[a-z0-9-]+\*?$` od dozwolonego prefiksu), `query` (1-512 znaków, tekst `simple_query_string`), `from`, `to` (ISO-8601 z przesunięciem, `to > from`, zakres <= `MCP_OPENSEARCH_MAX_RANGE`), `size` (1-100, domyślnie 20) | `{indexPattern, from, to, returned, hits: [{index, id, timestamp, data}]}`; napisy w `data` jako `UntrustedText` |
-| `get_document` | `READ_ONLY` | jak wyżej | jak wyżej | `index` (jeden konkretny indeks albo alias jednego indeksu, `^[a-z0-9][a-z0-9._-]{0,254}$`, od dozwolonego prefiksu), `id` (`^[A-Za-z0-9_-][A-Za-z0-9_.:@+=-]{0,255}$`) | `{index, id, data}`; napisy w `data` jako `UntrustedText` |
+| `search_logs` | `READ_ONLY` | `mcp-opensearch-read` (+ zakres `mcp-opensearch-idx-<prefiks>` od M3) | `user-secret` w M1 (docelowo `token-exchange`), `Authorization: Bearer` albo `Basic` | `index_pattern` (jeden wzorzec `^[a-z0-9-]+\*?$` od dozwolonego prefiksu), `query` (1-512 znaków, tekst `simple_query_string`), `from`, `to` (ISO-8601 z przesunięciem, `to > from`, zakres <= `MCP_OPENSEARCH_MAX_RANGE`), `size` (1-100, domyślnie 20) | `{indexPattern, from, to, returned, hits: [{index, id, timestamp, data, truncated}], truncated}`; `data` to lista wpisów `{name, path, value}`, `path` i `value` jako `UntrustedText` |
+| `get_document` | `READ_ONLY` | jak wyżej | jak wyżej | `index` (jeden konkretny indeks albo alias jednego indeksu, `^[a-z0-9][a-z0-9._-]{0,254}$`, od dozwolonego prefiksu), `id` (`^[A-Za-z0-9_-][A-Za-z0-9_.:@+=-]{0,255}$`) | `{index, id, data, truncated}`; `data` jak w `search_logs` |
 
 Nazwy widziane przez klienta: `opensearch__search_logs`, `opensearch__get_document` (prefiks dokłada gateway, C5).
 Błędy obu narzędzi: `not_found_or_denied` (brak indeksu lub dokumentu, 403 z OpenSearch, alias prowadzący poza
@@ -57,8 +57,9 @@ Cedar). Kolejne kroki `search_logs`:
 0. Argumenty sprawdza najpierw starter względem `inputSchema` (`invalid_argument` bez nazwy i wartości), potem
    narzędzie.
 1. Składnia: dokładnie jeden wzorzec; odrzucane są `,`, `:`, `<` (date math), wykluczenia `-...`, `_all`, sam
-   `*`, wieloznaczniki w środku i indeksy ukryte `.xxx`. Kontraktowy `OpenSearchIndexName` dopuszcza wiodącą
-   kropkę; serwer nie (fail-closed).
+   `*`, wieloznaczniki w środku i indeksy ukryte `.xxx`. Od kontraktów 2.1 (CC-074) wzorzec
+   `OpenSearchIndexName`, publikowany w `inputSchema` `get_document`, sam wyklucza wiodącą kropkę; serwer nie ma już
+   własnego filtra kropki w `get_document` (zostaje w `index_pattern` i w `IndexScope`).
 2. Prefiks: wzorzec musi zaczynać się od dozwolonego prefiksu na granicy `-`; inaczej `not_found_or_denied`
    (poprawna nazwa spoza zakresu wygląda jak brakujący indeks). `p*` serwer zamienia na `p,p-*` (przecinek
    pisze serwer, nie model).
@@ -82,13 +83,21 @@ indeksów zakazanych, H2 z recenzji kontraktów 2.0.0, decyzja odłożona).
 
 ### Treść z OpenSearch to dane
 
-Każdy napis z dokumentu trafia do modelu w polu `data` jako `UntrustedText` (CC-072, kontrakty 2.1):
-`{"kind":"untrusted-data","format":"text/plain","text":"...","truncated":false}`. Znaki `<`, `>`, `&` są
-escapowane (`&lt;` ...), więc do klienta nie dochodzi surowy HTML; znaki sterujące poza tabulacją i nową linią
-są usuwane; napis do 2000 znaków (dalej `truncated: true`), do 50 elementów listy lub pól obiektu, głębokość do
-6. Liczby i wartości logiczne zostają bez oznaczenia. `index`, `id` i `timestamp` to identyfikatory, nie
-`UntrustedText`. Wynik nie ma liczby wszystkich trafień. Narzędzia nie deklarują `outputSchema` (pola wyniku
-pochodzą z konfiguracji); do rozważenia przy kontraktach 2.1.
+Wartości pól z `MCP_OPENSEARCH_RESULT_FIELDS` trafiają do modelu w polu `data` jako lista wpisów
+`{name, path, value}` (wynik jest rekordem, więc ma `outputSchema`; mapa nie ma ograniczonego schematu).
+`name` to pole z konfiguracji. Pole z obiektem albo listą daje po jednym wpisie na liść, `path` (`a.b`, `[2]`) to
+nazwa z dokumentu, czyli też tekst od kogokolwiek, kto może coś zalogować. `path` i `value` mają kształt
+`UntrustedText` (CC-072): `{"kind":"untrusted-data","format":"text/plain","text":"...","truncated":false}`.
+Liczby i wartości logiczne są tekstem w zapisie JSON, `null` jest pomijany.
+
+Kolejność: wartość jako tekst, `TextHygiene.normalize` (znak sterujący lub niewidoczny zastępuje spacja), cięcie
+(`UntrustedText.cut`: wartość 2000 znaków, `path` 128), `plainCut`. Tekst nie jest escapowany: `<`, `>` i `&`
+zostają, klient nie renderuje go jako HTML (ta sama reguła w gitlab i servicedesk). Do 100 wpisów na dokument i
+głębokość 6, dalej `truncated: true` w trafieniu. Wynik `search_logs` ma budżet 250000 znaków tekstu (platforma
+odrzuca wynik ponad 1 MB): po jego przekroczeniu reszta trafień jest pomijana i `truncated: true` w wyniku.
+`index` to nazwa z zakresu, `id` to napis tylko wtedy, gdy ma kształt przyjmowany przez `get_document`
+(w przeciwnym razie `null`), `timestamp` tylko gdy wygląda jak data lub liczba. Pola puste są `@Nullable` w
+schemacie wyniku. Wynik nie ma liczby wszystkich trafień.
 
 ### DLS/FLS w OpenSearch: druga warstwa
 
@@ -171,10 +180,14 @@ zmienną z tabeli wyżej.
 
 Ryzyko: `application-dev.yml` jest w jarze produkcyjnym, a profil `dev` przyjmuje JWT podpisane opublikowanymi
 kluczami testowymi kontraktów i nie wymaga certyfikatu klienta. Dlatego `dev` słucha wyłącznie na adresie pętli
-zwrotnej: starter (od 3.0.0-alpha-5) odmawia startu z `dev` przy innym `server.address`, a test
+zwrotnej: starter odmawia startu z `dev` przy innym `server.address`, a test
 `DevProfileLoopbackTest` pilnuje tego w serwerze. Nie ustawiaj `SERVER_ADDRESS` ani `MCP_BIND` przy `dev` i
 nigdy nie włączaj `dev` na hoście ani w kontenerze, do którego łączy się gateway: tam działa wyłącznie
 konfiguracja bazowa z mTLS.
+
+`SPRING_PROFILES_ACTIVE=dev` wolno ustawić tylko w poleceniu z terminala, jak wyżej. Nie trafia do `.env`, szablonów
+compose, jednostek systemd ani obrazu: od 3.0.0-alpha-9 starter nie startuje z `dev` w kontenerze, na Kubernetesie
+i pod systemd, a `application-dev.yml` nie ustawia już TLS, mTLS ani magazynu `jti` (robi to starter).
 
 ## Uruchomienie z mcp-platform-dev (mTLS)
 
@@ -214,7 +227,7 @@ hosta (`mcp-gateway/scripts/run-dev-host.sh`, JWKS na `localhost:18445`) skonfig
 
 | Klasa | Co sprawdza |
 | --- | --- |
-| `SearchLogsToolTest` | poświadczenie z C3 w obu wywołaniach OpenSearch; postać na drucie (ścieżka i zapytanie percent-encoded, przecinek `p,p-*` jako `%2C`); ciało `_search` (`simple_query_string`, zakres, filtr `_index`, bez agregacji); `UntrustedText`, escapowanie HTML, tylko pola z konfiguracji, odrzucenie trafień spoza prefiksów; `readOnlyHint` i schemat; brak poświadczenia, 401, `service-account`, schemat `ApiKey` -> `credential_required`; `token-exchange` jak `user-secret`; alias poza zakres, alias do indeksu ukrytego, indeks bez uprawnień, brakujący i ukryty -> ten sam `not_found_or_denied`; poprawna nazwa spoza prefiksów wygląda jak brakujący indeks; data stream; 16 złych wzorców, naruszenia schematu (C10, bez echa wartości), druga linia walidacji w narzędziu; nazwa nieznanego argumentu z podrobioną linią JSON nie trafia do logu, a wywołanie jest audytowane; nieczytelna odpowiedź, przekierowanie; błąd 500 bez treści w wyniku i logu |
+| `SearchLogsToolTest` | poświadczenie z C3 w obu wywołaniach OpenSearch; postać na drucie (ścieżka i zapytanie percent-encoded, przecinek `p,p-*` jako `%2C`); ciało `_search` (`simple_query_string`, zakres, filtr `_index`, bez agregacji); `UntrustedText` bez escapowania, tylko pola z konfiguracji, odrzucenie trafień spoza prefiksów; `readOnlyHint` i schemat; brak poświadczenia, 401, `service-account`, schemat `ApiKey` -> `credential_required`; `token-exchange` jak `user-secret`; alias poza zakres, alias do indeksu ukrytego, indeks bez uprawnień, brakujący i ukryty -> ten sam `not_found_or_denied`; poprawna nazwa spoza prefiksów wygląda jak brakujący indeks; data stream; 16 złych wzorców, naruszenia schematu (C10, bez echa wartości), druga linia walidacji w narzędziu; nazwa nieznanego argumentu z podrobioną linią JSON nie trafia do logu, a wywołanie jest audytowane; nieczytelna odpowiedź, przekierowanie; błąd 500 bez treści w wyniku i logu |
 | `GetDocumentToolTest` | odczyt z C3, tylko pola z konfiguracji, `UntrustedText`; kodowanie `id` na drucie (`a:b@c+d=e`); alias czytany przez konkretny indeks (kolejność wywołań), alias z filtrem lub routingiem i alias do indeksu ukrytego -> `not_found_or_denied`; alias wielu indeksów i data stream -> `invalid_argument`; brak poświadczenia, 401; brakujący dokument = indeks bez uprawnień = brakujący = ukryty = alias poza zakres = indeks poza prefiksami; złe `index` i `id` (C10, bez echa), brakujący i nadmiarowy argument; nieczytelna odpowiedź, przekierowanie, przekroczony czas, odpowiedź ponad limit; wzorzec `index` pochodzi z kontraktów |
 | `GatewayOnlyAccessTest` | bez JWT 401 (`tools/call`, `ping`, `initialize`), JWT dla innego serwera, innego narzędzia, wariant serwisowy i przeterminowany -> 401; bez JWT tylko health |
 | `ProductionConfigurationTest`, `DevProfileLoopbackTest` | mTLS `need` poza `dev`; `https` poza `dev` (wyjątek: jawne `allow-plain-http`); adres bez userinfo, query i fragmentu; `dev` tylko na pętli zwrotnej |

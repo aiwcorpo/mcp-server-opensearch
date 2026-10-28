@@ -39,7 +39,7 @@ do modelu, który może go potraktować jak instrukcję. Wzorcami są `search_lo
 - Walidacja przed systemem. Wzorzec i długość identyfikatora, limity wielkości (`size <= 100`),
   zamknięte listy wartości. Błąd walidacji to `InvalidToolArgumentException` ze stałym tekstem opisującym
   format (starter oddaje go jako `invalid_argument`): nigdy z wartością argumentu (C10: komunikat nie zawiera
-  wartości argumentów) i nigdy z treścią odpowiedzi systemu. Opublikowany schemat egzekwuje starter (od alpha-6: C10
+  wartości argumentów) i nigdy z treścią odpowiedzi systemu. Opublikowany schemat egzekwuje starter (od alpha-6, bez zmian do alpha-10: C10
   `invalid_argument` i zdarzenie C8, bez nazw i wartości argumentów); walidacja w kodzie zostaje jako druga linia.
 - Segmenty ścieżki. Szablon URI `RestClient` koduje `/`, `?`, `#`, ale wartości `.` i `..` zostają segmentami
   ścieżki (`/{index}/_doc/..`). Wzorzec identyfikatora musi je wykluczać (np. pierwszy znak alfanumeryczny);
