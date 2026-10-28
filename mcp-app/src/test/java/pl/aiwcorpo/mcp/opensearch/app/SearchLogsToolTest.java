@@ -27,7 +27,7 @@ class SearchLogsToolTest extends ServerTestSupport {
     private static Map<String, Object> args(String pattern) {
         Map<String, Object> args = new HashMap<>();
         args.put("index_pattern", pattern);
-        args.put("query", "payment failed");
+        args.put("text", "payment failed");
         args.put("from", "2026-10-27T08:00:00Z");
         args.put("to", "2026-10-27T10:00:00+00:00");
         args.put("size", 10);
@@ -42,16 +42,20 @@ class SearchLogsToolTest extends ServerTestSupport {
             assertThat(result.isError()).as(text(result)).isFalse();
             assertThat(text(result))
                     .contains("\"index\":\"logs-team-a-2026.10.27\"", "\"id\":\"Xk3n8ZIBdLrT0q1aHf2p\"",
-                            "\"timestamp\":\"2026-10-27T09:15:02.123Z\"", "\"returned\":2")
+                            "\"timestamp\":\"2026-10-27T09:15:02.123Z\"", "\"hits\":[")
                     .as("free text is marked as untrusted data").contains("{\"name\":\"log.level\",\"path\":null,"
                             + "\"value\":{\"kind\":\"untrusted-data\",\"format\":\"text/plain\",\"text\":\"ERROR\","
                             + "\"truncated\":false}}")
                     .as("text is passed on as it is, not escaped").contains("<script>alert(1)</script> & retried")
                     .doesNotContain("&lt;", "&amp;")
+                    .as("a hit of an index the policy refuses (tagged restricted) is removed after the tool ran")
+                    .doesNotContain("logs-team-a-hr-1", "restricted payroll", "\"returned\"")
                     .as("fields outside result-fields stay in the adapter").doesNotContain("not-for-the-model")
-                    .as("hits of indices outside the prefixes are dropped").doesNotContain("secret-hr-1", "salary");
+                    .as("hits of indices outside the prefixes are dropped").doesNotContain("secret-hr-1", "salary", "logs-team-ab-1", "neighbour");
         }
-        assertThat(BACKEND.authorizations()).containsExactly(PAT, PAT);
+        assertThat(BACKEND.requests().stream().map(StubBackend.Request::path)).containsExactly(
+                "/_resolve/index/logs-team-a-%2A", "/logs-team-a-%2A/_search", "/_resolve/index/logs-team-a-2026.10.27",
+                "/_resolve/index/logs-team-a-2026.10.26", "/_resolve/index/logs-team-a-hr-1");
         StubBackend.Request resolve = BACKEND.requests().get(0);
         assertThat(resolve.path()).isEqualTo("/_resolve/index/logs-team-a-%2A");
         assertThat(resolve.query()).contains("expand_wildcards=open");
@@ -60,12 +64,13 @@ class SearchLogsToolTest extends ServerTestSupport {
         assertThat(search.path()).isEqualTo("/logs-team-a-%2A/_search");
         assertThat(search.query()).contains("expand_wildcards=open", "allow_partial_search_results=false");
         assertThat(search.body())
-                .contains("\"simple_query_string\":{\"query\":\"payment failed\",\"fields\":[\"message\"]",
+                .contains("\"multi_match\":{\"query\":\"payment failed\",\"fields\":[\"message\"],\"type\":\"best_fields\","
+                                + "\"operator\":\"and\",\"lenient\":true}",
                         "\"size\":10", "\"track_total_hits\":false",
                         "\"gte\":\"2026-10-27T08:00:00Z\",\"lt\":\"2026-10-27T10:00:00Z\"",
                         "{\"term\":{\"_index\":\"logs-team-a\"}}", "{\"prefix\":{\"_index\":\"logs-team-a-\"}}",
-                        "{\"prefix\":{\"_index\":\"app-\"}}")
-                .doesNotContain("aggs", "aggregations", "script", "query_string\":{\"query\":\"payment failed\",\"default_field");
+                        "{\"prefix\":{\"_index\":\"logs-team-b-\"}}")
+                .doesNotContain("aggs", "aggregations", "script", "query_string", "simple_query_string");
     }
 
     @Test
@@ -93,12 +98,12 @@ class SearchLogsToolTest extends ServerTestSupport {
             Map<String, Object> schema = tool.inputSchema();
             assertThat(schema).containsEntry("additionalProperties", false);
             assertThat(schema).extractingByKey("required").asInstanceOf(InstanceOfAssertFactories.LIST)
-                    .containsExactlyInAnyOrder("index_pattern", "query", "from", "to");
+                    .containsExactlyInAnyOrder("index_pattern", "text", "from", "to");
             Map<String, Object> properties = properties(schema);
-            assertThat(properties.keySet()).containsExactlyInAnyOrder("index_pattern", "query", "from", "to", "size");
+            assertThat(properties.keySet()).containsExactlyInAnyOrder("index_pattern", "text", "level", "service", "from", "to", "size");
             assertThat(properties.get("index_pattern")).asInstanceOf(InstanceOfAssertFactories.MAP)
                     .containsEntry("maxLength", 255).containsEntry("pattern", "^[a-z0-9-]+\\*?$");
-            assertThat(properties.get("query")).asInstanceOf(InstanceOfAssertFactories.MAP).containsEntry("maxLength", 512);
+            assertThat(properties.get("text")).asInstanceOf(InstanceOfAssertFactories.MAP).containsEntry("maxLength", 512);
             assertThat(properties.get("size")).asInstanceOf(InstanceOfAssertFactories.MAP).containsEntry("maximum", 100);
         }
     }
@@ -140,9 +145,9 @@ class SearchLogsToolTest extends ServerTestSupport {
     @Test
     void anAliasLeadingOutsideThePrefixesIsNotFoundOrDeniedAndNeverSearched() {
         try (McpSyncClient client = clientWithCredential(PAT)) {
-            McpSchema.CallToolResult byName = call(client, "search_logs", args("app-leak"));
-            McpSchema.CallToolResult byWildcard = call(client, "search_logs", args("app-l*"));
-            McpSchema.CallToolResult toHiddenIndex = call(client, "search_logs", args("app-hidden-target"));
+            McpSchema.CallToolResult byName = call(client, "search_logs", args("logs-team-b-leak"));
+            McpSchema.CallToolResult byWildcard = call(client, "search_logs", args("logs-team-b-l*"));
+            McpSchema.CallToolResult toHiddenIndex = call(client, "search_logs", args("logs-team-b-hidden-target"));
 
             assertThat(text(byName)).contains("\"error\":\"not_found_or_denied\"").doesNotContain("secret-hr");
             assertThat(text(byWildcard)).isEqualTo(text(byName));
@@ -169,10 +174,10 @@ class SearchLogsToolTest extends ServerTestSupport {
     @Test
     void aWildcardMatchingNothingIsAnEmptyResult() {
         try (McpSyncClient client = clientWithCredential(PAT)) {
-            McpSchema.CallToolResult result = call(client, "search_logs", args("app-nothing-*"));
+            McpSchema.CallToolResult result = call(client, "search_logs", args("logs-team-b-nothing-*"));
 
             assertThat(result.isError()).as(text(result)).isFalse();
-            assertThat(text(result)).contains("\"returned\":0", "\"hits\":[]");
+            assertThat(text(result)).contains("\"hits\":[]");
         }
         assertThat(BACKEND.requests()).hasSize(1);
     }
@@ -180,7 +185,7 @@ class SearchLogsToolTest extends ServerTestSupport {
     @Test
     void aDataStreamIsRejected() {
         try (McpSyncClient client = clientWithCredential(PAT)) {
-            McpSchema.CallToolResult result = call(client, "search_logs", args("app-s*"));
+            McpSchema.CallToolResult result = call(client, "search_logs", args("logs-team-b-s*"));
 
             assertThat(text(result)).contains("\"error\":\"invalid_argument\"", "data stream");
         }
@@ -222,12 +227,12 @@ class SearchLogsToolTest extends ServerTestSupport {
         Map<String, Object> extra = args("logs-team-a-*");
         extra.put("aggs", Map.of("by_index", Map.of("terms", Map.of("field", "_index"))));
         Map<String, Object> missingQuery = args("logs-team-a-*");
-        missingQuery.remove("query");
+        missingQuery.remove("text");
         Map<String, Object> nullQuery = args("logs-team-a-*");
-        nullQuery.put("query", null);
+        nullQuery.put("text", null);
         try (McpSyncClient client = clientWithCredential(PAT)) {
-            for (Map<String, Object> arguments : java.util.List.of(extra, missingQuery, nullQuery, with("query", "x".repeat(513)),
-                    with("query", 42), with("from", "2026-10-27 08:00"), with("from", "2026-10-27T08:00:00"),
+            for (Map<String, Object> arguments : java.util.List.of(extra, missingQuery, nullQuery, with("text", "x".repeat(513)),
+                    with("text", 42), with("level", "info"), with("level", "ERROR OR 1"), with("service", "a b"), with("service", "x\" OR"), with("from", "2026-10-27 08:00"), with("from", "2026-10-27T08:00:00"),
                     with("size", 101), with("size", 0), with("size", "10"), with("size", 1.5))) {
                 McpSchema.CallToolResult result = call(client, "search_logs", arguments);
 
@@ -241,8 +246,8 @@ class SearchLogsToolTest extends ServerTestSupport {
     @Test
     void argumentsThatPassTheSchemaAreCheckedByTheToolBeforeOpenSearch() {
         Map<String, Map<String, Object>> cases = new java.util.LinkedHashMap<>();
-        cases.put("query must be", with("query", " "));
-        cases.put("control characters", with("query", "a\u0000b"));
+        cases.put("text must be", with("text", " "));
+        cases.put("control characters", with("text", "a\u0000b"));
         cases.put("from must be an ISO-8601 date-time with offset", with("from", "2026-10-27 08:00:00Z+01"));
         cases.put("to must be later than from", with("to", "2026-10-27T08:00:00Z"));
         cases.put("may not exceed 168 hours", with("from", "2026-10-01T00:00:00Z"));

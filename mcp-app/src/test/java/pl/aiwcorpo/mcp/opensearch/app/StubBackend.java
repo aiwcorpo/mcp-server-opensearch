@@ -22,20 +22,23 @@ import java.util.stream.Collectors;
  * OpenSearch 2.x in tests: a real HTTP server on loopback answering the three endpoints the adapter uses with
  * response shapes of the OpenSearch REST API ({@code _resolve/index}, {@code _search}, {@code _doc}).
  *
- * <p>Cluster content (the server is configured with prefixes {@code logs-team-a} and {@code app}):
+ * <p>Cluster content (the server is configured with prefixes {@code logs-team-a} and {@code logs-team-b}):
  * <ul>
  *   <li>{@code logs-team-a-2026.10.26}, {@code logs-team-a-2026.10.27}: readable log indices;</li>
  *   <li>{@code logs-team-ab-1}: a neighbour the prefix {@code logs-team-a} must not cover;</li>
  *   <li>{@code secret-hr-1}: outside every prefix;</li>
+ *   <li>{@code logs-team-a-hr-1}: inside the granted prefix, but the server configuration tags its prefix
+ *       {@code logs-team-a-hr} as {@code restricted}, so the policy refuses it; {@code logs-team-b-1}: a plain index
+ *       of the second prefix;</li>
  *   <li>{@code logs-team-a-restricted}: exists, the caller has no permission: 403 when named, skipped by
  *       wildcards (OpenSearch Security with {@code do_not_fail_on_forbidden});</li>
  *   <li>{@code logs-team-a-hidden}: an index with {@code index.hidden=true};</li>
- *   <li>alias {@code logs-team-a-all} -> {@code logs-team-a-2026.10.27};</li>
- *   <li>under {@code app}: alias {@code app-leak} -> {@code secret-hr-1}, alias {@code app-two} -> both team-a
- *       indices, alias {@code app-hidden-target} -> {@code logs-team-a-hidden} (which {@code _resolve/index}
- *       does not report as hidden), alias {@code app-filtered} -> {@code logs-team-a-2026.10.27} with a filter
- *       and routing, {@code app-routed-index} and {@code app-routed-search} -> the same index with only an index
- *       or only a search routing and no filter, data stream {@code app-stream};</li>
+ *   <li>alias {@code logs-team-b-all} -> {@code logs-team-a-2026.10.27};</li>
+ *   <li>under {@code logs-team-b}: alias {@code logs-team-b-leak} -> {@code secret-hr-1}, alias {@code logs-team-b-two} -> both team-a
+ *       indices, alias {@code logs-team-b-hidden-target} -> {@code logs-team-a-hidden} (which {@code _resolve/index}
+ *       does not report as hidden), alias {@code logs-team-b-filtered} -> {@code logs-team-a-2026.10.27} with a filter
+ *       and routing, {@code logs-team-b-routed-index} and {@code logs-team-b-routed-search} -> the same index with only an index
+ *       or only a search routing and no filter, data stream {@code logs-team-b-stream};</li>
  *   <li>an index expression containing {@code boom}: 500 echoing the caller's Authorization header;</li>
  *   <li>misbehaving answers: {@code logs-team-a-badjson} (resolve answers HTML), {@code logs-team-a-302}
  *       (redirect to a second server that records what follows), document ids {@code doc-badjson},
@@ -54,24 +57,27 @@ final class StubBackend {
     static final String BODY_MARKER = "SECRETBODYTOKEN123";
     static final long SLOW_MILLIS = 4_000;
     static final int HUGE_BYTES = 256 * 1024;
+    /** Tagged {@code restricted} by the server configuration of the tests: the policy forbids it. */
+    static final String RESTRICTED_PREFIX = "logs-team-a-hr";
 
     private static final List<String> INDICES = List.of("logs-team-a-2026.10.26", "logs-team-a-2026.10.27",
-            "logs-team-ab-1", "secret-hr-1", "logs-team-a-restricted", "logs-team-a-hidden");
+            "logs-team-ab-1", "secret-hr-1", "logs-team-a-restricted", "logs-team-a-hidden", "logs-team-a-hr-1",
+            "logs-team-b-1");
     private static final Set<String> HIDDEN = Set.of("logs-team-a-hidden");
     private static final Set<String> FORBIDDEN = Set.of("logs-team-a-restricted");
     private static final Map<String, List<String>> ALIASES = Map.of(
-            "logs-team-a-all", List.of("logs-team-a-2026.10.27"),
-            "app-leak", List.of("secret-hr-1"),
-            "app-two", List.of("logs-team-a-2026.10.26", "logs-team-a-2026.10.27"),
-            "app-hidden-target", List.of("logs-team-a-hidden"),
-            "app-filtered", List.of("logs-team-a-2026.10.27"),
-            "app-routed-index", List.of("logs-team-a-2026.10.27"),
-            "app-routed-search", List.of("logs-team-a-2026.10.27"));
-    private static final Set<String> FILTERED_ALIASES = Set.of("app-filtered");
+            "logs-team-b-all", List.of("logs-team-a-2026.10.27"),
+            "logs-team-b-leak", List.of("secret-hr-1"),
+            "logs-team-b-two", List.of("logs-team-a-2026.10.26", "logs-team-a-2026.10.27"),
+            "logs-team-b-hidden-target", List.of("logs-team-a-hidden"),
+            "logs-team-b-filtered", List.of("logs-team-a-2026.10.27"),
+            "logs-team-b-routed-index", List.of("logs-team-a-2026.10.27"),
+            "logs-team-b-routed-search", List.of("logs-team-a-2026.10.27"));
+    private static final Set<String> FILTERED_ALIASES = Set.of("logs-team-b-filtered");
     private static final Map<String, String> ROUTING_ONLY_ALIASES = Map.of(
-            "app-routed-index", "{\"index_routing\":\"1\"}",
-            "app-routed-search", "{\"search_routing\":\"1\"}");
-    private static final List<String> DATA_STREAMS = List.of("app-stream");
+            "logs-team-b-routed-index", "{\"index_routing\":\"1\"}",
+            "logs-team-b-routed-search", "{\"search_routing\":\"1\"}");
+    private static final List<String> DATA_STREAMS = List.of("logs-team-b-stream");
 
     /** One request as OpenSearch saw it; {@code path} and {@code query} are the raw, percent-encoded wire forms. */
     record Request(String method, String path, String query, String authorization, String body) {
@@ -153,7 +159,7 @@ final class StubBackend {
         } else if (path.startsWith("/_resolve/index/")) {
             resolve(exchange, path.substring("/_resolve/index/".length()));
         } else if (path.endsWith("/_search") && "POST".equals(exchange.getRequestMethod())) {
-            search(exchange, path.substring(1, path.length() - "/_search".length()));
+            search(exchange, path.substring(1, path.length() - "/_search".length()), body);
         } else if (path.contains("/_doc/") && "GET".equals(exchange.getRequestMethod())) {
             String[] parts = path.substring(1).split("/_doc/", 2);
             document(exchange, parts[0], parts[1]);
@@ -219,12 +225,21 @@ final class StubBackend {
                 + "],\"data_streams\":[" + streamsJson + "]}");
     }
 
-    private void search(HttpExchange exchange, String expression) throws IOException {
+    private void search(HttpExchange exchange, String expression, String body) throws IOException {
+        if (body.contains("\"aggs\"")) {
+            respond(exchange, 200, "{\"took\":2,\"timed_out\":false,\"_shards\":{\"total\":2,\"successful\":2,\"skipped\":0,"
+                    + "\"failed\":0},\"hits\":{\"max_score\":null,\"hits\":[]},\"aggregations\":{\"groups\":{"
+                    + "\"doc_count_error_upper_bound\":0,\"sum_other_doc_count\":0,\"buckets\":["
+                    + "{\"key\":\"ERROR\",\"doc_count\":7},{\"key\":\"WARN <script>\",\"doc_count\":3}]}}}");
+            return;
+        }
         List<String> hits = new ArrayList<>();
         hits.add(hit("logs-team-a-2026.10.27", "Xk3n8ZIBdLrT0q1aHf2p", "2026-10-27T09:15:02.123Z",
                 "payment failed <script>alert(1)</script> & retried"));
         hits.add(hit("logs-team-a-2026.10.26", "Ab0n8ZIBdLrT0q1aHf00", "2026-10-26T23:59:59.000Z", "error: disk full"));
+        hits.add(hit("logs-team-ab-1", "ab-1", "2026-10-27T09:01:00.000Z", "neighbour of the prefix"));
         hits.add(hit("secret-hr-1", "hr-1", "2026-10-27T09:00:00.000Z", "salary list"));
+        hits.add(hit("logs-team-a-hr-1", "hr-2", "2026-10-27T09:05:00.000Z", "restricted payroll note"));
         respond(exchange, 200, "{\"took\":3,\"timed_out\":false,\"_shards\":{\"total\":2,\"successful\":2,\"skipped\":0,"
                 + "\"failed\":0},\"hits\":{\"max_score\":null,\"hits\":[" + String.join(",", hits) + "]}}");
     }

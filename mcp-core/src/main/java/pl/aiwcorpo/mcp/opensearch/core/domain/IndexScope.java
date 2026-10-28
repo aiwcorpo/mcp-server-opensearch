@@ -8,13 +8,18 @@ import java.util.Optional;
  * index named {@code p-...}, never {@code p...} without the dash: {@code logs-team-a} does not cover
  * {@code logs-team-ab} (the same rule as {@code OpenSearchIndexPrefix} in mcp-contracts and the Cedar scopes).
  *
- * <p>In M1 the prefixes come from the server configuration; with the starter beta they become the intersection
- * of that list with the caller's {@code QueryScope}, built in one place ({@code IndexScopeProvider}).
+ * <p>The prefixes are the grants of the caller's groups, narrowed by the virtual server link, within the prefixes
+ * the server is configured for ({@code IndexScopeProvider}). No prefix at all is an empty scope that covers nothing:
+ * it never stands for "every index".
  */
 public record IndexScope(List<String> prefixes) {
 
     public IndexScope {
         prefixes = List.copyOf(prefixes);
+    }
+
+    public boolean isEmpty() {
+        return prefixes.isEmpty();
     }
 
     public boolean covers(String index) {

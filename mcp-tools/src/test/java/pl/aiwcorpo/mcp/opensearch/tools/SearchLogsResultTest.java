@@ -29,8 +29,9 @@ class SearchLogsResultTest {
         SearchLogsResult result = SearchLogsResult.of("logs-a*", "f", "t", found);
 
         assertThat(result.truncated()).isTrue();
-        assertThat(result.returned()).isEqualTo(result.hits().size()).isLessThan(10).isPositive();
-        assertThat(result.hits().stream().mapToInt(LogHit::jsonSize).sum()).isLessThanOrEqualTo(SearchLogsResult.JSON_BUDGET);
+        assertThat(result.hits().size()).isLessThan(10).isPositive();
+        assertThat(found.subList(0, result.hits().size()).stream().mapToInt(LogHit::jsonSize).sum())
+                .isLessThanOrEqualTo(SearchLogsResult.JSON_BUDGET);
     }
 
     @Test
@@ -47,7 +48,7 @@ class SearchLogsResultTest {
         SearchLogsResult result = SearchLogsResult.of("logs-a*", "f", "t", found);
 
         assertThat(result.truncated()).isTrue();
-        assertThat(result.returned()).isPositive().isLessThan(100);
+        assertThat(result.hits().size()).isPositive().isLessThan(100);
         assertThat(JSON.writeValueAsBytes(result).length).as("the platform limit is 1 048 576 bytes")
                 .isLessThan(1_048_576);
     }
@@ -57,6 +58,6 @@ class SearchLogsResultTest {
         SearchLogsResult result = SearchLogsResult.of("logs-a*", "f", "t", List.of(hit(10), hit(10)));
 
         assertThat(result.truncated()).isFalse();
-        assertThat(result.returned()).isEqualTo(2);
+        assertThat(result.hits()).hasSize(2);
     }
 }

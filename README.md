@@ -1,7 +1,7 @@
 # mcp-opensearch: serwer MCP platformy
 
-Serwer MCP dla systemu `opensearch`, zbudowany na `mcp-platform-starter` 3.0.0-alpha-11 (Java 25, Spring Boot
-4.1.0, Spring AI 2.0.0, kontrakty `mcp-contracts` 2.1.1). Stoi wyłącznie za gateway'em platformy: przyjmuje
+Serwer MCP dla systemu `opensearch`, zbudowany na `mcp-platform-starter` 3.0.0-beta-2 (Java 25, Spring Boot
+4.1.0, Spring AI 2.0.0, kontrakty `mcp-contracts` 3.1.0). Stoi wyłącznie za gateway'em platformy: przyjmuje
 ruch tylko po mTLS z wewnętrznym JWT gateway'a (C2), a do systemu docelowego woła z poświadczeniem
 użytkownika, które gateway dołącza do każdego żądania (C3). Bez poprawnego JWT odpowiada 401, nie ma trybu
 anonimowego.
@@ -36,17 +36,45 @@ całość. Resolver zasobów (`@ResourceRef`, starter beta) dojdzie w `mcp-integ
 
 ## Narzędzia
 
-| Narzędzie | Ryzyko | Uprawnienie (C9) | Poświadczenie | Argumenty | Wynik |
-| --- | --- | --- | --- | --- | --- |
-| `search_logs` | `READ_ONLY` | `mcp-opensearch-read` (+ zakres `mcp-opensearch-idx-<prefiks>` od M3) | `user-secret` w M1 (docelowo `token-exchange`), `Authorization: Bearer` albo `Basic` | `index_pattern` (jeden wzorzec `^[a-z0-9-]+\*?$` od dozwolonego prefiksu), `query` (1-512 znaków, tekst `simple_query_string`), `from`, `to` (ISO-8601 z przesunięciem, `to > from`, zakres <= `MCP_OPENSEARCH_MAX_RANGE`), `size` (1-100, domyślnie 20) | `{indexPattern, from, to, returned, hits: [{index, id, timestamp, data, truncated}], truncated}`; `data` to lista wpisów `{name, path, value}`, `path` i `value` jako `UntrustedText` |
-| `get_document` | `READ_ONLY` | jak wyżej | jak wyżej | `index` (jeden konkretny indeks albo alias jednego indeksu, `^[a-z0-9][a-z0-9._-]{0,254}$`, od dozwolonego prefiksu), `id` (`^[A-Za-z0-9_-][A-Za-z0-9_.:@+=-]{0,255}$`) | `{index, id, data, truncated}`; `data` jak w `search_logs` |
+| Narzędzie (tytuł) | Ryzyko | Akcja | Uprawnienie (C9) | Poświadczenie | Argumenty | Wynik |
+| --- | --- | --- | --- | --- | --- | --- |
+| `search_logs` ("Szukaj w logach") | `READ_ONLY` | `read` | grupa `mcp-opensearch-read` i co najmniej jeden zakres `mcp-opensearch-idx-<prefiks>` | `user-secret` albo `token-exchange`, `Authorization: Bearer` lub `Basic` | `index_pattern` (jeden wzorzec `^[a-z0-9-]+\*?$` od prefiksu z grantów), `text` (1-512 znaków, słowa; operatory to zwykły tekst), opcjonalnie `level` (`TRACE`...`FATAL`) i `service` (nazwa), `from`, `to` (ISO-8601 z przesunięciem, `to > from`, zakres <= `MCP_OPENSEARCH_MAX_RANGE`), `size` (1-100, domyślnie 20) | `{indexPattern, from, to, hits: [{index, id, timestamp, data, truncated}], truncated}`; `index` to `@ResourceRef`; `data` to wpisy `{name, path, value}`, `path` i `value` jako `UntrustedText`; bez liczników |
+| `aggregate_logs` ("Zlicz logi według pola") | `READ_ONLY` | `read` | jak wyżej | jak wyżej | `index_pattern`, `group_by` (`level`, `service`, `host`), opcjonalnie `text`, `level`, `service`, `from`, `to`, `size` (1-50, domyślnie 10) | `{indexPattern, from, to, groupBy, buckets: [{key, count}]}`; `key` jako `UntrustedText` |
+| `get_document` ("Pobierz dokument z logów") | `READ_ONLY` | `read` | jak wyżej | jak wyżej | `index` (`@ResourceRef` typu `OpenSearch::Index`; jeden konkretny indeks albo alias jednego indeksu, `^[a-z0-9][a-z0-9._-]{0,254}$`), `id` (`^[A-Za-z0-9_-][A-Za-z0-9_.:@+=-]{0,255}$`) | `{index, id, data, truncated}`; `data` jak w `search_logs` |
 
-Nazwy widziane przez klienta: `opensearch__search_logs`, `opensearch__get_document` (prefiks dokłada gateway, C5).
-Błędy obu narzędzi: `not_found_or_denied` (brak indeksu lub dokumentu, 403 z OpenSearch, alias prowadzący poza
-prefiksy albo do indeksu ukrytego, nazwa poprawna, ale spoza prefiksów serwera, alias z filtrem lub routingiem w
-`get_document`, indeks ukryty), `credential_required` (brak poświadczenia, 401 z OpenSearch, poświadczenie typu
-`service-account` albo schematu innego niż `Bearer`/`Basic`), `invalid_argument`, `upstream_unavailable`,
-`internal_error`. Szczegóły i zasady: `docs/api/tools-catalog.md`.
+Nazwy widziane przez klienta: `opensearch__search_logs`, `opensearch__aggregate_logs`, `opensearch__get_document`
+(prefiks dokłada gateway, C5). Model podaje wartości (tekst, poziom, usługa, pole grupowania), nigdy zapytania:
+`multi_match` z operatorem `and` po polach z konfiguracji, `term` dla poziomu i usługi oraz jedna agregacja `terms`
+na polu z konfiguracji buduje serwer. Wynik `search_logs` i `get_document` nie przekracza 1 MB (budżet 900000 B
+szacowanego JSON, po przekroczeniu `truncated: true`).
+Błędy narzędzi: `not_found_or_denied` (brak indeksu lub dokumentu, 403 z OpenSearch, brak grantów, indeks poza
+grantami albo linkiem, indeks z tagiem `restricted`, alias prowadzący poza zakres albo do indeksu ukrytego, alias
+kilku indeksów, z filtrem lub routingiem w `get_document`, data stream w `get_document`, indeks ukryty),
+`access_denied` (brak grupy `mcp-opensearch-read`), `credential_required` (brak poświadczenia, 401 z OpenSearch,
+poświadczenie typu `service-account` albo schematu innego niż `Bearer`/`Basic`), `invalid_argument` (także
+`aggregate_logs` na aliasie albo na zbyt wielu indeksach), `upstream_unavailable`, `internal_error`. Szczegóły:
+`docs/api/tools-catalog.md`.
+
+### Polityki, zakres i klasyfikacja (M3)
+
+- `get_document.index` ma `@ResourceRef(type = "OpenSearch::Index")`. Resolver (`OpenSearchIndexResolver`) pyta
+  OpenSearch poświadczeniem użytkownika, w zakresie grantów, i opisuje indeks, który OpenSearch faktycznie podaje
+  (alias jednego indeksu -> ten indeks): `name` i `tags`. Brak, zakaz i odmowa polityki to ten sam `not_found_or_denied`.
+- `tags` (atrybut obowiązkowy) pochodzą z konfiguracji, bo OpenSearch nie ma tagów: `opensearch.scope.index-tags`
+  (lista `{prefix, tags}`; prefiks obejmuje `p` i `p-...`; w środowisku `OPENSEARCH_SCOPE_INDEXTAGS_0_PREFIX`,
+  `OPENSEARCH_SCOPE_INDEXTAGS_0_TAGS_0`). Indeks bez reguły ma `tags: []`. Paczka polityk zabrania `restricted`.
+- Zakres wyszukiwania z `QueryScope`: grupy `mcp-opensearch-idx-<prefiks>` (mapowanie w paczce) przecięte z linkiem
+  wirtualnego serwera (`opensearchIndexPrefixes`) i z `MCP_OPENSEARCH_INDEX_PREFIXES`. Kolejne `p` dają wyrażenie
+  `p,p-*` (nigdy `p*`: `payments-old` nie wchodzi do zakresu `p`). Gdy `QueryScope.nothingToQuery()` (brak grantów albo
+  link i granty się nie spotykają), serwer odmawia (`not_found_or_denied`) i nie wysyła żadnego zapytania: puste
+  wyrażenie indeksów oznaczałoby wszystkie indeksy. Każde żądanie z wyrażeniem niesie `expand_wildcards=open`,
+  `ignore_unavailable=true`, `allow_no_indices=true` (`QueryScope.OPENSEARCH_SEARCH_PARAMETERS`).
+- `search_logs`: `LogHitView.index` to `@ResourceRef`, więc starter po wykonaniu usuwa trafienia z indeksów, których
+  polityka nie dopuszcza (np. tag `restricted`). Wynik nie ma liczników (`returned`, `total`).
+- `aggregate_logs`: liczby nie dają się poprawić po fakcie, więc do zapytania trafiają tylko konkretne indeksy, które
+  `_resolve/index` zwrócił i które polityka dopuszcza (`ResourcePolicy.allows`, do 100 indeksów). Gdy `_resolve/index`
+  zwraca alias (README startera: wzorzec `p-*` obejmuje też aliasy), narzędzie odmawia z `invalid_argument`; alias
+  prowadzący poza zakres jest najpierw zwykłym `not_found_or_denied`.
 
 ### Zakres indeksów
 
@@ -54,7 +82,7 @@ Prefiks `p` z `MCP_OPENSEARCH_INDEX_PREFIXES` obejmuje indeks `p` i indeksy `p-.
 (`logs-team-a` nie obejmuje `logs-team-ab`; ta sama reguła co `OpenSearchIndexPrefix` w kontraktach i zakresy
 Cedar). Kolejne kroki `search_logs`:
 
-0. Argumenty sprawdza najpierw starter względem `inputSchema` (`invalid_argument` bez nazwy i wartości), potem
+0. Zakres wywołania wynika z grantów (wyżej); pusty zakres kończy wywołanie. Argumenty sprawdza najpierw starter względem `inputSchema` (`invalid_argument` bez nazwy i wartości), potem
    narzędzie.
 1. Składnia: dokładnie jeden wzorzec; odrzucane są `,`, `:`, `<` (date math), wykluczenia `-...`, `_all`, sam
    `*`, wieloznaczniki w środku i indeksy ukryte `.xxx`. Od kontraktów 2.1 (CC-074) wzorzec
@@ -64,13 +92,13 @@ Cedar). Kolejne kroki `search_logs`:
    (poprawna nazwa spoza zakresu wygląda jak brakujący indeks). `p*` serwer zamienia na `p,p-*` (przecinek
    pisze serwer, nie model).
 3. `GET _resolve/index/<wyrażenie>?expand_wildcards=open`: każdy indeks, każdy cel każdego aliasu musi być w
-   zakresie i nie może być ukryty; strumień danych (data stream) -> `invalid_argument` (indeksy `.ds-*` są
-   ukryte, obsługa w M2). Coś poza zakresem -> `not_found_or_denied` dla całego wywołania, bez wyszukiwania.
+   zakresie i nie może być ukryty; strumień danych (data stream) -> `invalid_argument` w wyszukiwaniu i
+   `not_found_or_denied` w `get_document`. Coś poza zakresem -> `not_found_or_denied` dla całego wywołania, bez wyszukiwania.
    `_resolve/index` nie podaje atrybutów celów aliasu, więc cele aliasów są rozwiązywane drugi raz po nazwie
    (tam atrybut `hidden` jest podany); cel ukryty, brakujący albo niewidoczny odrzuca całe wywołanie.
-4. `POST <wyrażenie>/_search` z ciałem zbudowanym przez serwer: `simple_query_string` po polach z
-   konfiguracji (bez FUZZY/NEAR/SLOP), zakres czasu, filtr `_index` do prefiksów (alias dodany po kroku 3
-   nadal nic nie wnosi), `_source.includes` z konfiguracji, `track_total_hits: false`, bez agregacji.
+4. `POST <wyrażenie>/_search` z ciałem zbudowanym przez serwer: `multi_match` (operator `and`) po polach z
+   konfiguracji, opcjonalne `term` poziomu i usługi, zakres czasu, filtr `_index` do prefiksów (alias dodany po kroku 3
+   nadal nic nie wnosi), `_source.includes` z konfiguracji, `track_total_hits: false`.
 5. Trafienia z indeksów spoza zakresu są odrzucane; z dokumentu zostają tylko pola z `MCP_OPENSEARCH_RESULT_FIELDS`.
 
 `get_document` przechodzi kroki 1-3 dla konkretnej nazwy i czyta dokument z konkretnego indeksu (alias jest
@@ -78,8 +106,8 @@ zamieniany na swój jedyny indeks, żeby nie dało się go przepiąć między sp
 omija filtr i routing aliasu, więc alias, który któreś ma (`GET _alias/<nazwa>`), jest odrzucany jako
 `not_found_or_denied`. W `search_logs` alias z filtrem działa normalnie: wyszukiwanie idzie przez niego.
 
-Serwer nie używa `_msearch`, `_mget`, skryptów, `_search?q=` ani agregacji (agregaty mogłyby liczyć dokumenty
-indeksów zakazanych, H2 z recenzji kontraktów 2.0.0, decyzja odłożona).
+Serwer nie używa `_msearch`, `_mget`, skryptów, `_count` ani `_search?q=`. Jedyna agregacja to `terms` w
+`aggregate_logs` (krok 3 i zasady wyżej).
 
 ### Treść z OpenSearch to dane
 
@@ -142,9 +170,12 @@ lokalne, niżej) wyłącza TLS i daje ułatwienia, które starter odrzuca poza `
 | `MCP_OPENSEARCH_URL` | adres REST API OpenSearch | wymagane |
 | `MCP_OPENSEARCH_SSL_BUNDLE` | bundle SSL dla HTTPS systemu, np. `mcp-internal-ca`; puste = zaufanie JDK | puste |
 | `MCP_OPENSEARCH_ALLOW_PLAIN_HTTP` | `true` pozwala na `http://` w `MCP_OPENSEARCH_URL` poza profilem `dev`, wyłącznie dla mocków `mcp-platform-dev`; poświadczenie idzie wtedy otwartym tekstem | `false` |
-| `MCP_OPENSEARCH_INDEX_PREFIXES` | dozwolone prefiksy indeksów, po przecinku (wzorzec `OpenSearchIndexPrefix` bez wiodącej kropki) | wymagane |
+| `MCP_OPENSEARCH_INDEX_PREFIXES` | górna granica prefiksów indeksów, po przecinku (wzorzec `OpenSearchIndexPrefix` bez wiodącej kropki); grant spoza listy nic nie daje | wymagane |
 | `MCP_OPENSEARCH_TIMESTAMP_FIELD` | pole czasu (zakres i sortowanie) | `@timestamp` |
-| `MCP_OPENSEARCH_QUERY_FIELDS` | pola przeszukiwane przez `simple_query_string` | `message` |
+| `MCP_OPENSEARCH_QUERY_FIELDS` | pola, w których szukany jest `text` | `message` |
+| `MCP_OPENSEARCH_LEVEL_FIELD`, `MCP_OPENSEARCH_SERVICE_FIELD`, `MCP_OPENSEARCH_HOST_FIELD` | pola keyword filtrów `level`, `service` i grupowania | `log.level`, `service.name`, `host.name` |
+| `MCP_POLICY_URL`, `MCP_POLICY_KEY_ID`, `MCP_POLICY_PUBLIC_KEY_FILE`, `MCP_POLICY_STATE_DIR` | podpisana paczka polityk (Ed25519), katalog stanu z ostatnią rewizją | wymagane poza `dev` |
+| `MCP_INTERNAL_URL`, `MCP_ACCEPTED_CREDENTIAL_TYPES` | opis serwera w manifeście (`GET /mcp-manifest`) | wymagane / `user-secret` |
 | `MCP_OPENSEARCH_RESULT_FIELDS` | jedyne pola `_source` w wyniku (bez wieloznaczników) | `@timestamp,message,log.level,service.name,host.name` |
 | `MCP_OPENSEARCH_MAX_RANGE` | najdłuższy zakres `to - from` | `7d` |
 | `MCP_REDIS_HOST`, `MCP_REDIS_PORT`, `MCP_REDIS_USER`, `MCP_REDIS_PASSWORD` | Redis dla jednorazowego `jti` (użytkownik ACL `mcp-opensearch`, klucze `jti:mcp-opensearch:*`) | `localhost`, `6379`, `mcp-opensearch`, puste |
@@ -155,7 +186,8 @@ https://mcp-opensearch.internal:8443/mcp`). Bez JWT odpowiada tylko `/actuator/h
 `readiness`), ale TLS i tak wymaga certyfikatu klienta z CA wewnętrznego.
 
 Serwer nie wstaje bez `MCP_GATEWAY_JWKS_URI`, `MCP_CONNECT_URL`, `MCP_OPENSEARCH_URL`,
-`MCP_OPENSEARCH_INDEX_PREFIXES` i plików TLS.
+`MCP_OPENSEARCH_INDEX_PREFIXES`, paczki polityk (`MCP_POLICY_*`) i plików TLS. W `dev` paczka pochodzi z
+`http://127.0.0.1:18747/policies/main/latest.json` (klucz z `mcp-policies/keys/dev/`, ścieżka względem katalogu startu).
 
 ## Uruchomienie lokalne bez środowiska
 
@@ -208,7 +240,7 @@ export MCP_TLS_KEYSTORE="$MCP_PLATFORM_DEV/certs/mcp-opensearch/keystore.p12"
 export MCP_TLS_TRUSTSTORE="$MCP_PLATFORM_DEV/certs/ca/truststore.p12"
 export MCP_PORT=18540 MCP_BIND=127.0.0.1 MCP_REDIS_PORT=16379
 export MCP_OPENSEARCH_URL=http://localhost:18549 MCP_OPENSEARCH_ALLOW_PLAIN_HTTP=true   # bez mocka; http tylko dla mocków środowiska
-export MCP_OPENSEARCH_INDEX_PREFIXES=logs-team-a,app
+export MCP_OPENSEARCH_INDEX_PREFIXES=logs-team-a,logs-team-b
 export MCP_GATEWAY_JWKS_URI=https://localhost:18445/.well-known/jwks.json
 export MCP_CONNECT_URL='http://localhost:18090/connections?system={system}'
 "$JAVA_HOME/bin/java" -jar mcp-app/target/mcp-opensearch.jar
@@ -227,9 +259,13 @@ hosta (`mcp-gateway/scripts/run-dev-host.sh`, JWKS na `localhost:18445`) skonfig
 
 | Klasa | Co sprawdza |
 | --- | --- |
-| `SearchLogsToolTest` | poświadczenie z C3 w obu wywołaniach OpenSearch; postać na drucie (ścieżka i zapytanie percent-encoded, przecinek `p,p-*` jako `%2C`); ciało `_search` (`simple_query_string`, zakres, filtr `_index`, bez agregacji); `UntrustedText` bez escapowania, tylko pola z konfiguracji, odrzucenie trafień spoza prefiksów; `readOnlyHint` i schemat; brak poświadczenia, 401, `service-account`, schemat `ApiKey` -> `credential_required`; `token-exchange` jak `user-secret`; alias poza zakres, alias do indeksu ukrytego, indeks bez uprawnień, brakujący i ukryty -> ten sam `not_found_or_denied`; poprawna nazwa spoza prefiksów wygląda jak brakujący indeks; data stream; 16 złych wzorców, naruszenia schematu (C10, bez echa wartości), druga linia walidacji w narzędziu; nazwa nieznanego argumentu z podrobioną linią JSON nie trafia do logu, a wywołanie jest audytowane; nieczytelna odpowiedź, przekierowanie; błąd 500 bez treści w wyniku i logu |
+| `SearchLogsToolTest` | poświadczenie z C3 w obu wywołaniach OpenSearch; postać na drucie (ścieżka i zapytanie percent-encoded, przecinek `p,p-*` jako `%2C`); ciało `_search` (`multi_match`, zakres, filtr `_index`, bez agregacji), trafienie indeksu z tagiem `restricted` usuwane przez `ResultFilter`; `UntrustedText` bez escapowania, tylko pola z konfiguracji, odrzucenie trafień spoza prefiksów; `readOnlyHint` i schemat; brak poświadczenia, 401, `service-account`, schemat `ApiKey` -> `credential_required`; `token-exchange` jak `user-secret`; alias poza zakres, alias do indeksu ukrytego, indeks bez uprawnień, brakujący i ukryty -> ten sam `not_found_or_denied`; poprawna nazwa spoza prefiksów wygląda jak brakujący indeks; data stream; 16 złych wzorców, naruszenia schematu (C10, bez echa wartości), druga linia walidacji w narzędziu; nazwa nieznanego argumentu z podrobioną linią JSON nie trafia do logu, a wywołanie jest audytowane; nieczytelna odpowiedź, przekierowanie; błąd 500 bez treści w wyniku i logu |
 | `GetDocumentToolTest` | odczyt z C3, tylko pola z konfiguracji, `UntrustedText`; kodowanie `id` na drucie (`a:b@c+d=e`); alias czytany przez konkretny indeks (kolejność wywołań), alias z filtrem lub routingiem i alias do indeksu ukrytego -> `not_found_or_denied`; alias wielu indeksów i data stream -> `invalid_argument`; brak poświadczenia, 401; brakujący dokument = indeks bez uprawnień = brakujący = ukryty = alias poza zakres = indeks poza prefiksami; złe `index` i `id` (C10, bez echa), brakujący i nadmiarowy argument; nieczytelna odpowiedź, przekierowanie, przekroczony czas, odpowiedź ponad limit; wzorzec `index` pochodzi z kontraktów |
 | `GatewayOnlyAccessTest` | bez JWT 401 (`tools/call`, `ping`, `initialize`), JWT dla innego serwera, innego narzędzia, wariant serwisowy i przeterminowany -> 401; bez JWT tylko health |
+| `ResourcePolicyTest` | indeks z tagiem `restricted` -> `not_found_or_denied` identyczny jak brakujący; `access_denied` bez grupy odczytu (OpenSearch nietknięty); brak grantów -> odmowa bez żadnego zapytania; zapytanie ograniczone do przyznanego prefiksu; link zawężający i pusty przekrój linku z grantami; `p*` nie dochodzi do sąsiada (`logs-team-ab`) |
+| `AggregateLogsToolTest` | liczy tylko indeksy dopuszczone polityką; alias we wzorcu -> `invalid_argument`; alias poza zakresem -> `not_found_or_denied`; złe argumenty; schemat |
+| `ManifestTest` | `GET /mcp-manifest` zgodny z regułami gateway'a, definicje i `definitionHash` równe `tools/list`, `resourceRefs` tylko w `get_document`, tytuły, zamknięte schematy |
+| `QueryScopeIndexScopeProviderTest` | granty `p` -> `p,p-*`, `payments-old` poza zakresem; pusty zakres; przecięcie z linkiem i z konfiguracją |
 | `ProductionConfigurationTest`, `DevProfileLoopbackTest` | mTLS `need` poza `dev`; `https` poza `dev` (wyjątek: jawne `allow-plain-http`); adres bez userinfo, query i fragmentu; `dev` tylko na pętli zwrotnej |
 | `OpenSearchServiceTest` | granica prefiksu na `-`, wyrażenie `p,p-*`, odrzucanie trafień i dokumentów spoza zakresu, alias z jednym celem poza zakresem, cel aliasu ukryty albo niezwrócony przy drugim `_resolve`, alias z filtrem w `get_document` (bez Springa) |
 

@@ -12,6 +12,7 @@ import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.time.Duration;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -33,6 +34,10 @@ abstract class ServerTestSupport {
 
     static final String SERVER_ID = "mcp-opensearch";
     static final String SYSTEM = "opensearch";
+    static final String READ_GROUP = "mcp-opensearch-read";
+    /** Groups of the example bundle of the contracts that grant the index prefixes logs-team-a and logs-team-b. */
+    static final String GRANT_TEAM_A = "mcp-opensearch-idx-logs-team-a";
+    static final String GRANT_TEAM_B = "mcp-opensearch-idx-logs-team-b";
     static final String ENDPOINT = "/mcp";
     static final Set<String> CONTRACT_SYSTEMS = contractSystems();
 
@@ -43,7 +48,10 @@ abstract class ServerTestSupport {
     static void environment(DynamicPropertyRegistry registry) {
         GATEWAY.serverProperties().forEach((name, value) -> registry.add(name, () -> value));
         registry.add("opensearch.backend.base-url", BACKEND::baseUrl);
-        registry.add("opensearch.scope.allowed-index-prefixes", () -> "logs-team-a,app");
+        registry.add("opensearch.scope.allowed-index-prefixes", () -> "logs-team-a,logs-team-b");
+        // OpenSearch has no tags; the server classifies by prefix. The policy forbids what is tagged "restricted".
+        registry.add("opensearch.scope.index-tags[0].prefix", () -> StubBackend.RESTRICTED_PREFIX);
+        registry.add("opensearch.scope.index-tags[0].tags[0]", () -> "restricted");
         // Short limits so the timeout and size tests run quickly; StubBackend's slow and huge documents exceed them.
         registry.add("opensearch.backend.read-timeout", () -> "1s");
         registry.add("opensearch.backend.max-response-size", () -> "64KB");
@@ -63,7 +71,17 @@ abstract class ServerTestSupport {
 
     /** As {@link #clientWithCredential(String)}, with another {@code X-MCP-Credential-Type} (C3). */
     McpSyncClient clientWithCredential(String credential, String credentialType) {
-        return clientAs(user -> user.username("jkowalski"), credential, credentialType);
+        return clientAs(ServerTestSupport::reader, credential, credentialType);
+    }
+
+    /** The caller of most tests: allowed to use the read tools, granted both prefixes the server is configured for. */
+    static void reader(TestGateway.Token user) {
+        user.username("jkowalski").groups(List.of(READ_GROUP, GRANT_TEAM_A, GRANT_TEAM_B));
+    }
+
+    /** A caller in exactly these groups. */
+    McpSyncClient clientInGroups(String credential, String... groups) {
+        return clientAs(user -> user.username("jkowalski").groups(List.of(groups)), credential, "user-secret");
     }
 
     /** Same, with the JWT claims of the caller set by {@code user} (a call through a link carries {@code vs}). */

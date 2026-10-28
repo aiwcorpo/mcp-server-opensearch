@@ -1,5 +1,70 @@
 # STATUS - mcp-server-opensearch (ws-04)
 
+M3: osiągnięty (2026-10-28) - serwer na starterze 3.0.0-beta-2 (kontrakty 3.1.0): `@ToolTitle`, zamknięte schematy, `policy.*` i `manifest.*`, `GET /mcp-manifest` zgodny z `tools/list`; `@ResourceRef` + `OpenSearchIndexResolver` dla `OpenSearch::Index` (`name`, `tags` z konfiguracji); zakres z `QueryScope` (`opensearchIndexExpression()`, `nothingToQuery()` -> odmowa, `OPENSEARCH_SEARCH_PARAMETERS`); zapytania tylko z ustrukturyzowanych filtrów (`text`, `level`, `service`); `ResultFilter` na trafieniach `search_logs`; `aggregate_logs` odmawia dla aliasów i liczy tylko indeksy dopuszczone polityką; 107 testów, 0 błędów.
+
+## M3: kamienie pośrednie
+
+| Kamień | Zawartość | Status |
+| --- | --- | --- |
+| M3.1 | alpha-12..14 (bez zmian w kodzie: `DevProfileLoopbackTest` już z alpha-11, brak wykluczeń platformy), beta-1 i beta-2: BOM, tytuły, `policy.*`, `manifest.*`, Dockerfile bez Alpine, `StateDirectory` w systemd | zrobione |
+| M3.2 | `QueryScope` jako źródło zakresu, `@ResourceRef` i resolver, `ResultFilter`, odmowa przy pustym zakresie | zrobione |
+| M3.3 | filtry zamiast `simple_query_string`, `aggregate_logs`, manifest, testy i dokumentacja | zrobione |
+
+Zakres M3 poza listą wyżej: starter beta-3 nie istnieje w momencie zamknięcia (tagi startera kończą się na `v3.0.0-beta-2`);
+przejście na niego to podbicie `mcp-platform.version` i pozycje z "Z beta-2 na beta-3".
+
+## Migracja na starter 3.0.0-beta-2 (2026-10-28)
+
+Źródło: `MIGRATION-3.0.md`, "Jak przejść z alpha-11 na alpha-14", "Z alpha-14 na beta-1", "Z beta-1 na beta-2".
+
+| Punkt | Status |
+| --- | --- |
+| Wersje: BOM 3.0.0-beta-2, README (starter, kontrakty 3.1.0) | zrobione |
+| `DevProfileLoopbackTest`, wykluczenia platformy | już zgodne (alpha-11); `grep autoconfigure.exclude` pusty |
+| `@ToolTitle` (polski, do 100 znaków) | "Szukaj w logach", "Zlicz logi według pola", "Pobierz dokument z logów" |
+| Schemat wejścia zamknięty i ograniczony | `@ArgumentLimits` na każdym argumencie; wzorce zakotwiczone, bez `|` na wierzchu (poziom i grupowanie jako `^(?:a|b)$`), bez map i `$ref` |
+| Higiena tekstu | `text` przez `TextHygiene.firstProblem`; wartości z systemu przez `UntrustedValues` (`label` dla grup) |
+| `policy.*`, `manifest.*` w `application.yml`, `application-dev.yml`, szablonie env i testach | zrobione; `allow-test-keys` tylko w `dev` (`ProductionConfigurationTest`) |
+| `@ResourceRef` i resolver | `get_document.index`; `search_logs.index_pattern` nie (wzorzec z `*` nie jest nazwą indeksu); wynik `search_logs` przez `LogHitView.index` |
+| Wyszukiwanie przez `StructuredQuery` (beta-2) | dla OpenSearch odpowiednikiem jest `QueryScope.opensearchIndexExpression()` plus ciało budowane z wartości; model nie podaje DSL ani `simple_query_string` |
+| Wynik śledzony przez filtr | rekordy, bez `Map`; `returned` usunięte (licznik sprzed filtra) |
+| Kody błędów resolvera, `invalid_argument` tylko dla wzorca | awaria OpenSearch w resolverze -> `upstream_unavailable`/`internal_error`; pusty `Optional` dla 403/404 i dla wszystkiego, czego serwer nie czyta |
+| Cykl beanów `ResourcePolicy` <-> resolver <-> zakres | `QueryScopeIndexScopeProvider` bierze `ObjectProvider<ResourcePolicy>` |
+| Obraz | `eclipse-temurin:25-jre` (glibc), nie Alpine |
+
+Weryfikacja: `./mvnw -B clean verify` (JDK 25) -> 107 testów, 0 błędów (mcp-application 15, mcp-integration 12, mcp-tools 3,
+mcp-app 77). Starter nie ma jeszcze mocka OpenSearch w `mcp-platform-dev`; paczka polityk z `:18747` jest używana tylko
+przy uruchomieniu procesu na hoście.
+
+## Odstępstwa od zadania M3 i decyzje
+
+- `aggregate_logs` jest nowym narzędziem. STATUS z M1 odkładał agregacje do decyzji człowieka (H2), ale zadanie M3 wymaga
+  odmowy dla aliasów w agregatach i testu, więc istnieje jedno wąskie narzędzie: `terms` po `level`/`service`/`host`
+  (pola z konfiguracji), do 50 grup, indeksy wymienione z nazwy (do 100), bez `hits.total` i `_count`. Do zatwierdzenia przez
+  człowieka razem z `definitionHash`.
+- Zmiana kształtu wejścia `search_logs`: `query` (składnia `simple_query_string`) zastąpione przez `text` (słowa, `multi_match`
+  z `and`) oraz opcjonalne `level` i `service`. Wynik bez `returned`. Zmienia `definitionHash`.
+- Brak grantów, pusty przekrój linku z grantami i indeks poza grantami dają `not_found_or_denied` (ten sam tekst co brakujący
+  indeks), także dla `search_logs`; doc template'u mówi o pustym wyniku dla linku. Wybór zgodny z zadaniem (odmowa) i bez
+  ujawniania istnienia zakresów.
+- `get_document`: alias kilku indeksów i data stream to teraz `not_found_or_denied` (resolver nie ma jak zwrócić
+  `invalid_argument`, a kod odróżniał to, co jest pod nazwą). `search_logs` dla data stream zostaje `invalid_argument`.
+- Tagi indeksów (`OpenSearch::Index.tags`) z konfiguracji `opensearch.scope.index-tags`; indeks bez reguły ma `[]`, czyli
+  jest dostępny w granicie. Klasyfikacja `restricted` wymaga wpisu w konfiguracji (OpenSearch nie ma tagów).
+- Paczka przykładowa kontraktów zna prefiksy `logs-team-a`, `logs-team-b`; testy używają ich (stare `app` zniknęło).
+- Prawdziwego OpenSearch nadal nie uruchamiałem (stub z kształtami API 2.x); kształt odpowiedzi agregacji `terms` niepotwierdzony na klastrze.
+
+## Propozycje CC
+
+- CC-A (C7 / entity-builder.md sekcja 8): doprecyzować, co serwer zwraca, gdy `nothingToQuery()` jest prawdą dla wyszukiwania
+  (pusty wynik dla linku wykluczającego wszystko, jak w szablonie, czy `not_found_or_denied`). Serwer OpenSearch zwraca
+  `not_found_or_denied` w obu przypadkach.
+- CC-B (starter, nie kontrakty): `ResourceResolver` i `QueryScope` wymagają obiegu przez `ObjectProvider<ResourcePolicy>`, gdy
+  resolver korzysta z zakresu; warto opisać w README startera (cykl `ResourcePolicy` -> `ResourceResolvers` -> resolver).
+- CC-C (C7): źródło `OpenSearch::Index.tags`. Dziś konfiguracja serwera; jeśli platforma ma je trzymać centralnie (paczka
+  polityk, a nie plik serwera), trzeba to rozstrzygnąć przed produkcją.
+- Z M1 bez zmian: kategoria (b) z recenzji, kod dla zasobu poza zakresem serwera.
+
 M1: osiągnięty (2026-10-27, runda 2; 2026-10-28 przeniesiony na starter 3.0.0-alpha-10) - `search_logs` i `get_document` (READ_ONLY) na starterze 3.0.0-alpha-10, walidacja argumentów przez starter (C10), jeden wzorzec indeksu od prefiksu z konfiguracji, aliasy rozwiązywane i sprawdzane (cele ukryte, filtr), poświadczenie z C3, 69 testów na stubie OpenSearch 2.x.
 
 Starter: BOM `pl.aiwcorpo.mcp:mcp-platform-bom:3.0.0-alpha-11` (kontrakty 2.1.1, Spring Boot 4.1.0, Spring AI
@@ -72,20 +137,6 @@ mcp-tools 3). Uruchomienie wg README: `dev` na 18541, health 200, `POST /mcp` be
   - Dla każdego narzędzia: pozytywny, `credential_required` (brak i 401), `not_found_or_denied`,
     `invalid_argument` (C10), negatywne dla każdego identyfikatora (`index_pattern`, `index`, `id`).
 
-## Jedno miejsce na QueryScope (M3)
-
-`IndexScopeProvider` (port w `mcp-core`) to jedyne źródło zakresu. M1: `ConfiguredIndexScopeProvider` zwraca
-prefiksy z `MCP_OPENSEARCH_INDEX_PREFIXES` każdemu wywołującemu. Ze starterem beta implementacja zwróci
-przecięcie tej listy z `QueryScope` wywołującego (`granted` z `queryConstraints["OpenSearch::Index"]`, z
-uwzględnieniem `vsc`); pusty wynik -> pusta lista bez zapytania (`entity-builder.md` sekcja 8). Reszta
-(`OpenSearchService`, filtr `_index`, odrzucanie trafień) już działa na `IndexScope`. `ResultFilter` wepnie się
-w `OpenSearchService.searchLogs` w miejscu `filter(hit -> scope.covers(hit.index()))`.
-
-`@ResourceRef` (M3): tylko `get_document.index` (`OpenSearch::Index`). `search_logs.index_pattern` z `*` nie
-pasuje do `OpenSearchIndexName` kontraktu, więc nie może być `@ResourceRef`; zakres wyszukiwania pochodzi z
-`QueryScope` (tak jak w wektorze `result-filter/opensearch-search-without-link`). Brief ws-04 mówi
-"`@ResourceRef` dla każdego identyfikatora" - do potwierdzenia przy M3.
-
 ## Odstępstwa i decyzje fail-closed
 
 - Kontraktowy `OpenSearchIndexName` przyjmuje wiodącą kropkę; serwer ją odrzuca (argumenty i konfiguracja).
@@ -100,7 +151,7 @@ pasuje do `OpenSearchIndexName` kontraktu, więc nie może być `@ResourceRef`; 
   `invalid_argument` (O-L1): odpowiedź nie mówi, które prefiksy serwer obsługuje.
 - Brakujący indeks nazwany wprost w `search_logs` -> `not_found_or_denied` (jak 403); wzorzec bez dopasowań ->
   pusty wynik.
-- Agregacje: brak (H2 z recenzji kontraktów 2.0.0, odłożone do decyzji człowieka).
+- Agregacje: od M3 `aggregate_logs` (patrz niżej); H2 z recenzji kontraktów 2.0.0 zamknięte przez wyłączenie indeksów zakazanych z zapytania i odmowę dla aliasów.
 - `Basic` przyjmowany technicznie (zadanie koordynatora), choć decyzja człowieka 2026-10-27 mówi, że
   `user-secret` to pojedynczy token, a Basic dla użytkowników w v1 nie jest obsługiwany. Broker go więc nie
   wyda; serwer nic na tym nie traci.

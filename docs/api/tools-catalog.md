@@ -8,15 +8,17 @@ pochodzi z definicji `OpenSearchIndexName` kontraktów.
 
 | Narzędzie (klient widzi `opensearch__<nazwa>`) | Ryzyko | Akcja (C6) | Argumenty | Zasób (C7) | Uprawnienie (C9) | Poświadczenie |
 | --- | --- | --- | --- | --- | --- | --- |
-| `search_logs` | `READ_ONLY` | `read` | `index_pattern` (`^[a-z0-9-]+\*?$`, 1-255, bez wiodącego `-`, od dozwolonego prefiksu), `query` (1-512, bez znaków sterujących), `from`, `to` (ISO-8601 z przesunięciem, 20-40 znaków), `size` (1-100, domyślnie 20) | `OpenSearch::Index` (`index_pattern`, od M3 przez `@ResourceRef`) | `mcp-opensearch-read`, zakres `mcp-opensearch-idx-<prefiks>` | `user-secret` (M1) / `token-exchange` (docelowo), `Authorization: Bearer` lub `Basic` |
-| `get_document` | `READ_ONLY` | `read` | `index` (`^[a-z0-9][a-z0-9._-]{0,254}$`, od dozwolonego prefiksu), `id` (`^[A-Za-z0-9_-][A-Za-z0-9_.:@+=-]{0,255}$`) | `OpenSearch::Index` (`index`) | jak wyżej | jak wyżej |
+| `search_logs` ("Szukaj w logach") | `READ_ONLY` | `read` | `index_pattern` (`^[a-z0-9-]+\*?$`, 1-255, od prefiksu z grantów), `text` (1-512, bez znaków sterujących), `level` (opcjonalnie, `^(?:TRACE\|DEBUG\|INFO\|WARN\|ERROR\|FATAL)$`), `service` (opcjonalnie, do 64 znaków), `from`, `to` (ISO-8601 z przesunięciem, 20-40 znaków), `size` (1-100, domyślnie 20) | `OpenSearch::Index` w wyniku (`hits[].index`, `@ResourceRef`); zakres z `QueryScope` | `mcp-opensearch-read` + `mcp-opensearch-idx-<prefiks>` | `user-secret` / `token-exchange`, `Authorization: Bearer` lub `Basic` |
+| `aggregate_logs` ("Zlicz logi według pola") | `READ_ONLY` | `read` | `index_pattern`, `group_by` (`level`, `service`, `host`), opcjonalnie `text`, `level`, `service`, `from`, `to`, `size` (1-50, domyślnie 10) | indeksy z `_resolve/index` oceniane polityką (`ResourcePolicy.allows`); zakres z `QueryScope` | jak wyżej | jak wyżej |
+| `get_document` ("Pobierz dokument z logów") | `READ_ONLY` | `read` | `index` (`^[a-z0-9][a-z0-9._-]{0,254}$`), `id` (`^[A-Za-z0-9_-][A-Za-z0-9_.:@+=-]{0,255}$`) | `OpenSearch::Index` (`index`, `@ResourceRef`) | jak wyżej | jak wyżej |
 
 Błędy (C10):
 
 | Sytuacja | Kod |
 | --- | --- |
-| zły argument (naruszenie schematu sprawdza starter, resztę narzędzie): wzorzec z `,` `:` `<` `-` `_all` `*` `.`, nadmiarowy argument, data stream, alias kilku indeksów w `get_document` | `invalid_argument` (bez nazwy i wartości argumentu) |
-| indeks lub dokument nie istnieje, nazwa poprawna, ale poza prefiksami serwera, 403 OpenSearch, alias z celem poza prefiksami albo z celem ukrytym, alias z filtrem lub routingiem w `get_document`, indeks ukryty | `not_found_or_denied` (ten sam tekst) |
+| zły argument (naruszenie schematu sprawdza starter, resztę narzędzie): wzorzec z `,` `:` `<` `-` `_all` `*` `.`, nadmiarowy argument, data stream w `search_logs`, alias w `aggregate_logs`, agregacja po zbyt wielu indeksach | `invalid_argument` (bez nazwy i wartości argumentu) |
+| brak grantów (`QueryScope.nothingToQuery()`), indeks lub dokument nie istnieje, nazwa poza grantami, linkiem albo prefiksami serwera, indeks z tagiem `restricted`, 403 OpenSearch, alias z celem poza prefiksami albo z celem ukrytym, alias kilku indeksów, z filtrem lub routingiem albo data stream w `get_document`, indeks ukryty | `not_found_or_denied` (ten sam tekst) |
+| brak grupy `mcp-opensearch-read` | `access_denied` |
 | brak poświadczenia, 401 OpenSearch, `service-account`, schemat inny niż `Bearer`/`Basic` | `credential_required` |
 | OpenSearch nieosiągalny, 502/503/504, przekroczony czas | `upstream_unavailable` |
 | reszta (np. 500), przekierowanie, odpowiedź nieczytelna albo większa niż `max-response-size` | `internal_error` |

@@ -96,19 +96,19 @@ class GetDocumentToolTest extends ServerTestSupport {
     @Test
     void anAliasIsReadThroughItsSingleConcreteIndex() {
         try (McpSyncClient client = clientWithCredential(PAT)) {
-            McpSchema.CallToolResult result = call(client, "get_document", Map.of("index", "logs-team-a-all", "id", DOC_ID));
+            McpSchema.CallToolResult result = call(client, "get_document", Map.of("index", "logs-team-b-all", "id", DOC_ID));
 
             assertThat(result.isError()).as(text(result)).isFalse();
         }
         assertThat(BACKEND.requests().stream().map(StubBackend.Request::path)).containsExactly(
-                "/_resolve/index/logs-team-a-all", "/_resolve/index/logs-team-a-2026.10.27", "/_alias/logs-team-a-all",
+                "/_resolve/index/logs-team-b-all", "/_resolve/index/logs-team-a-2026.10.27", "/_alias/logs-team-b-all",
                 "/logs-team-a-2026.10.27/_doc/" + DOC_ID);
     }
 
     @Test
     void anAliasWithAFilterOrRoutingIsNotRead() {
         try (McpSyncClient client = clientWithCredential(PAT)) {
-            McpSchema.CallToolResult result = call(client, "get_document", Map.of("index", "app-filtered", "id", DOC_ID));
+            McpSchema.CallToolResult result = call(client, "get_document", Map.of("index", "logs-team-b-filtered", "id", DOC_ID));
 
             assertThat(text(result)).contains("\"error\":\"not_found_or_denied\"");
         }
@@ -118,7 +118,7 @@ class GetDocumentToolTest extends ServerTestSupport {
     @Test
     void anAliasWithOnlyARoutingIsNotRead() {
         try (McpSyncClient client = clientWithCredential(PAT)) {
-            for (String alias : new String[] {"app-routed-index", "app-routed-search"}) {
+            for (String alias : new String[] {"logs-team-b-routed-index", "logs-team-b-routed-search"}) {
                 assertThat(text(call(client, "get_document", Map.of("index", alias, "id", DOC_ID))))
                         .as(alias).contains("\"error\":\"not_found_or_denied\"");
             }
@@ -127,12 +127,11 @@ class GetDocumentToolTest extends ServerTestSupport {
     }
 
     @Test
-    void anAliasOfSeveralIndicesOrADataStreamIsNotRead() {
+    void anAliasOfSeveralIndicesOrADataStreamIsNotFoundOrDenied() {
         try (McpSyncClient client = clientWithCredential(PAT)) {
-            assertThat(text(call(client, "get_document", Map.of("index", "app-two", "id", DOC_ID))))
-                    .contains("\"error\":\"invalid_argument\"", "alias of several indices");
-            assertThat(text(call(client, "get_document", Map.of("index", "app-stream", "id", DOC_ID))))
-                    .contains("\"error\":\"invalid_argument\"", "data stream");
+            String missing = text(call(client, "get_document", Map.of("index", "logs-team-a-missing", "id", DOC_ID)));
+            assertThat(text(call(client, "get_document", Map.of("index", "logs-team-b-two", "id", DOC_ID)))).isEqualTo(missing);
+            assertThat(text(call(client, "get_document", Map.of("index", "logs-team-b-stream", "id", DOC_ID)))).isEqualTo(missing);
         }
         assertThat(BACKEND.requests()).noneMatch(r -> r.path().contains("/_doc/"));
     }
@@ -186,7 +185,7 @@ class GetDocumentToolTest extends ServerTestSupport {
                     Map.of("index", "logs-team-a-2026.10.27", "id", "no-such-doc")));
             assertThat(missingDocument).contains("\"error\":\"not_found_or_denied\"");
             for (String index : new String[] {"logs-team-a-restricted", "logs-team-a-missing", "logs-team-a-hidden",
-                    "app-leak"}) {
+                    "logs-team-b-leak"}) {
                 assertThat(text(call(client, "get_document", Map.of("index", index, "id", DOC_ID))))
                         .as(index).isEqualTo(missingDocument);
             }
@@ -240,7 +239,7 @@ class GetDocumentToolTest extends ServerTestSupport {
     @Test
     void anAliasToAHiddenIndexIsNotRead() {
         try (McpSyncClient client = clientWithCredential(PAT)) {
-            McpSchema.CallToolResult result = call(client, "get_document", Map.of("index", "app-hidden-target", "id", DOC_ID));
+            McpSchema.CallToolResult result = call(client, "get_document", Map.of("index", "logs-team-b-hidden-target", "id", DOC_ID));
 
             assertThat(text(result)).contains("\"error\":\"not_found_or_denied\"");
         }

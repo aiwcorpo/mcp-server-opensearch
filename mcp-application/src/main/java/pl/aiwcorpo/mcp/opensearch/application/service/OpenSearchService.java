@@ -2,14 +2,21 @@ package pl.aiwcorpo.mcp.opensearch.application.service;
 
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
+import java.util.function.Predicate;
+import pl.aiwcorpo.mcp.opensearch.core.domain.AggregateQuery;
+import pl.aiwcorpo.mcp.opensearch.core.domain.AggregationOverAliasException;
 import pl.aiwcorpo.mcp.opensearch.core.domain.IndexDocument;
 import pl.aiwcorpo.mcp.opensearch.core.domain.IndexOutsideScopeException;
 import pl.aiwcorpo.mcp.opensearch.core.domain.IndexScope;
+import pl.aiwcorpo.mcp.opensearch.core.domain.LogBucket;
 import pl.aiwcorpo.mcp.opensearch.core.domain.LogHit;
 import pl.aiwcorpo.mcp.opensearch.core.domain.LogQuery;
 import pl.aiwcorpo.mcp.opensearch.core.domain.NotFoundOrDeniedException;
+import pl.aiwcorpo.mcp.opensearch.core.domain.ResolvedIndex;
 import pl.aiwcorpo.mcp.opensearch.core.domain.ResolvedIndices;
+import pl.aiwcorpo.mcp.opensearch.core.domain.TooManyIndicesException;
 import pl.aiwcorpo.mcp.opensearch.core.domain.UnsupportedIndexTargetException;
 import pl.aiwcorpo.mcp.opensearch.core.port.in.OpenSearchUseCase;
 import pl.aiwcorpo.mcp.opensearch.core.port.out.IndexScopeProvider;
@@ -26,8 +33,15 @@ import pl.aiwcorpo.mcp.opensearch.core.port.out.OpenSearchPort;
  * alias are resolved once more by name (where the {@code hidden} attribute is reported). A document read goes
  * to the concrete index and would skip the filter or routing of an alias, so aliases that have either are not
  * read.
+ *
+ * <p>The policy (Cedar) is applied by the starter around these use cases: on the index of a document read (through
+ * {@link #resolveIndex}, which is what the resolver of {@code OpenSearch::Index} calls), on every hit of a search,
+ * and by the aggregation tool on each index it hands to {@link #aggregateLogs}.
  */
 public class OpenSearchService implements OpenSearchUseCase {
+
+    /** Indices one aggregation request may name; the request path carries them all. */
+    static final int MAX_AGGREGATED_INDICES = 100;
 
     private final OpenSearchPort openSearch;
     private final IndexScopeProvider scopes;
@@ -39,7 +53,7 @@ public class OpenSearchService implements OpenSearchUseCase {
 
     @Override
     public List<LogHit> searchLogs(LogQuery query) {
-        IndexScope scope = scopes.current();
+        IndexScope scope = requireScope();
         String expression = scope.expressionFor(query.pattern()).orElseThrow(IndexOutsideScopeException::new);
         ResolvedIndices resolved = openSearch.resolve(expression).orElseThrow(NotFoundOrDeniedException::new);
         requireInsideScope(resolved, scope);
@@ -56,8 +70,53 @@ public class OpenSearchService implements OpenSearchUseCase {
     }
 
     @Override
+    public List<LogBucket> aggregateLogs(AggregateQuery query, Predicate<String> readable) {
+        IndexScope scope = requireScope();
+        String expression = scope.expressionFor(query.pattern()).orElseThrow(IndexOutsideScopeException::new);
+        ResolvedIndices resolved = openSearch.resolve(expression).orElseThrow(NotFoundOrDeniedException::new);
+        requireInsideScope(resolved, scope);
+        // Checked after the scope, so an alias that leads outside it is a plain "not found" and never named as an alias.
+        if (!resolved.aliases().isEmpty()) {
+            throw new AggregationOverAliasException();
+        }
+        List<String> indices = resolved.indices().stream().map(ResolvedIndices.Index::name).filter(readable).toList();
+        if (indices.isEmpty()) {
+            if (!query.pattern().wildcard()) {
+                throw new NotFoundOrDeniedException();
+            }
+            return List.of();
+        }
+        if (indices.size() > MAX_AGGREGATED_INDICES) {
+            throw new TooManyIndicesException();
+        }
+        return openSearch.aggregate(indices, scope, query);
+    }
+
+    @Override
+    public Optional<ResolvedIndex> resolveIndex(String index) {
+        try {
+            return Optional.of(locate(index));
+        } catch (NotFoundOrDeniedException | IndexOutsideScopeException | UnsupportedIndexTargetException refused) {
+            return Optional.empty();
+        }
+    }
+
+    @Override
     public IndexDocument getDocument(String index, String id) {
-        IndexScope scope = scopes.current();
+        IndexScope scope = requireScope();
+        if (!scope.covers(index)) {
+            throw new NotFoundOrDeniedException();
+        }
+        // The concrete index, not the alias it was named by: the alias could be repointed after the check.
+        IndexDocument document = openSearch.findDocument(index, id).orElseThrow(NotFoundOrDeniedException::new);
+        if (!scope.covers(document.index())) {
+            throw new NotFoundOrDeniedException();
+        }
+        return document;
+    }
+
+    private ResolvedIndex locate(String index) {
+        IndexScope scope = requireScope();
         if (!scope.covers(index)) {
             throw new IndexOutsideScopeException();
         }
@@ -67,12 +126,16 @@ public class OpenSearchService implements OpenSearchUseCase {
         if (!resolved.aliases().isEmpty() && openSearch.aliasHasFilterOrRouting(resolved.aliases().getFirst().name())) {
             throw new NotFoundOrDeniedException();
         }
-        // The concrete index, not the alias: the alias could be repointed between the check and the read.
-        IndexDocument document = openSearch.findDocument(concrete, id).orElseThrow(NotFoundOrDeniedException::new);
-        if (!scope.covers(document.index())) {
+        return new ResolvedIndex(concrete);
+    }
+
+    /** An empty scope (no grant, or a link that excludes every grant) must never reach OpenSearch: no index list means all of them. */
+    private IndexScope requireScope() {
+        IndexScope scope = scopes.current();
+        if (scope.isEmpty()) {
             throw new NotFoundOrDeniedException();
         }
-        return document;
+        return scope;
     }
 
     private void requireInsideScope(ResolvedIndices resolved, IndexScope scope) {

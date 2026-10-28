@@ -9,6 +9,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
@@ -27,13 +28,18 @@ import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClientResponseException;
+import pl.aiwcorpo.mcp.opensearch.core.domain.AggregateQuery;
+import pl.aiwcorpo.mcp.opensearch.core.domain.GroupBy;
 import pl.aiwcorpo.mcp.opensearch.core.domain.IndexDocument;
 import pl.aiwcorpo.mcp.opensearch.core.domain.IndexScope;
+import pl.aiwcorpo.mcp.opensearch.core.domain.LogBucket;
+import pl.aiwcorpo.mcp.opensearch.core.domain.LogFilter;
 import pl.aiwcorpo.mcp.opensearch.core.domain.LogHit;
 import pl.aiwcorpo.mcp.opensearch.core.domain.LogQuery;
 import pl.aiwcorpo.mcp.opensearch.core.domain.NotFoundOrDeniedException;
 import pl.aiwcorpo.mcp.opensearch.core.domain.ResolvedIndices;
 import pl.aiwcorpo.mcp.opensearch.core.port.out.OpenSearchPort;
+import pl.aiwcorpo.mcp.platform.resource.QueryScope;
 import pl.aiwcorpo.mcp.platform.security.BackendCredential;
 import pl.aiwcorpo.mcp.platform.security.CredentialContext;
 import pl.aiwcorpo.mcp.platform.security.CredentialRequiredException;
@@ -44,8 +50,9 @@ import pl.aiwcorpo.mcp.platform.security.CredentialRequiredException;
  * and DLS/FLS as a second layer behind the prefix checks of this server.
  *
  * <p>Only four endpoints are used: {@code GET _resolve/index/{expr}}, {@code GET _alias/{name}},
- * {@code POST {expr}/_search} with a body the server builds, and {@code GET {index}/_doc/{id}}. No
- * {@code _msearch}, {@code _mget}, scripts, aggregations or {@code ?q=}. 404 and 403 both become "not visible"
+ * {@code POST {expr}/_search} with a body the server builds (a bool query of the model's values, and for
+ * {@code aggregate_logs} one terms aggregation on a configured field), and {@code GET {index}/_doc/{id}}. No
+ * {@code _msearch}, {@code _mget}, scripts, {@code _count} or {@code ?q=}. 404 and 403 both become "not visible"
  * ({@code not_found_or_denied}), 401 means the stored credential no longer works
  * ({@code credential_required}). A failed call becomes an exception with the status alone, an unusable answer
  * (redirect, unparsable or oversized body) a {@link BackendResponseException}, so no response body reaches a
@@ -61,8 +68,15 @@ public class OpenSearchAdapter implements OpenSearchPort {
     private static final String DEV_PROFILE = "dev";
     private static final Logger log = LoggerFactory.getLogger(OpenSearchAdapter.class);
 
-    /** Open indices only: wildcards never expand to hidden or closed indices; missing names are skipped. */
-    private static final String INDICES_OPTIONS = "expand_wildcards=open&ignore_unavailable=true&allow_no_indices=true";
+    /**
+     * Open indices only: wildcards never expand to hidden or closed indices; missing names are skipped. The starter
+     * owns the list ({@link QueryScope#OPENSEARCH_SEARCH_PARAMETERS}) and every request that carries an index
+     * expression sends all of it.
+     */
+    private static final String INDICES_OPTIONS = QueryScope.OPENSEARCH_SEARCH_PARAMETERS.entrySet().stream()
+            .sorted(Map.Entry.comparingByKey())
+            .map(parameter -> parameter.getKey() + "=" + parameter.getValue())
+            .collect(Collectors.joining("&"));
 
     private final RestClient client;
     private final OpenSearchSearchProperties search;
@@ -177,6 +191,43 @@ public class OpenSearchAdapter implements OpenSearchPort {
     }
 
     @Override
+    public List<LogBucket> aggregate(List<String> indices, IndexScope scope, AggregateQuery query) {
+        BackendCredential credential = credential();
+        AggregateResponse response;
+        try {
+            // The names are written by the server from what _resolve returned (they match the contract's index name
+            // pattern, no comma or wildcard among them), joined with commas here.
+            response = client.post()
+                    .uri("/{expression}/_search?" + INDICES_OPTIONS + "&allow_partial_search_results=false",
+                            String.join(",", indices))
+                    .headers(credential::applyTo)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(aggregateBody(scope, query))
+                    .retrieve()
+                    .body(AggregateResponse.class);
+        } catch (HttpClientErrorException.NotFound | HttpClientErrorException.Forbidden hidden) {
+            throw new NotFoundOrDeniedException();
+        } catch (HttpClientErrorException.Unauthorized expired) {
+            throw new CredentialRequiredException(SYSTEM);
+        } catch (RestClientResponseException | ResourceAccessException statusOrIo) {
+            throw statusOrIo;
+        } catch (RestClientException unreadable) {
+            throw new BackendResponseException("body not readable");
+        }
+        if (response == null || response.aggregations() == null || response.aggregations().groups() == null
+                || response.aggregations().groups().buckets() == null) {
+            throw new BackendResponseException("no aggregation section");
+        }
+        List<LogBucket> buckets = new ArrayList<>();
+        for (Bucket bucket : response.aggregations().groups().buckets()) {
+            if (bucket.key() != null && bucket.count() != null) {
+                buckets.add(new LogBucket(UntrustedValues.label(String.valueOf(bucket.key())), bucket.count()));
+            }
+        }
+        return buckets;
+    }
+
+    @Override
     public Optional<IndexDocument> findDocument(String index, String id) {
         BackendCredential credential = credential();
         DocumentResponse response;
@@ -226,38 +277,71 @@ public class OpenSearchAdapter implements OpenSearchPort {
     }
 
     private Map<String, Object> searchBody(IndexScope scope, LogQuery query) {
-        List<Object> indexClauses = new ArrayList<>();
-        for (String prefix : scope.prefixes()) {
-            indexClauses.add(Map.of("term", Map.of("_index", prefix)));
-            indexClauses.add(Map.of("prefix", Map.of("_index", prefix + "-")));
-        }
-        Map<String, Object> range = new LinkedHashMap<>();
-        range.put("gte", query.from().toString());
-        range.put("lt", query.to().toString());
-        range.put("format", "strict_date_optional_time");
-
-        Map<String, Object> text = new LinkedHashMap<>();
-        text.put("query", query.text());
-        text.put("fields", search.queryFields());
-        text.put("default_operator", "and");
-        // No FUZZY, NEAR or SLOP: cheap queries only. Field names cannot appear in simple_query_string text.
-        text.put("flags", "AND|OR|NOT|PHRASE|PREFIX|PRECEDENCE|WHITESPACE|ESCAPE");
-        text.put("lenient", true);
-
-        Map<String, Object> bool = new LinkedHashMap<>();
-        bool.put("must", List.of(Map.of("simple_query_string", text)));
-        bool.put("filter", List.of(
-                Map.of("range", Map.of(search.timestampField(), range)),
-                Map.of("bool", Map.of("should", indexClauses, "minimum_should_match", 1))));
-
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("size", query.size());
         body.put("track_total_hits", false);
         body.put("timeout", "10s");
         body.put("_source", Map.of("includes", search.resultFields()));
         body.put("sort", List.of(Map.of(search.timestampField(), Map.of("order", "desc", "unmapped_type", "date"))));
-        body.put("query", Map.of("bool", bool));
+        body.put("query", Map.of("bool", Map.of("filter", filters(scope, query.filter(), query.from(), query.to()))));
         return body;
+    }
+
+    private Map<String, Object> aggregateBody(IndexScope scope, AggregateQuery query) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("size", 0);
+        body.put("track_total_hits", false);
+        body.put("timeout", "10s");
+        body.put("query", Map.of("bool", Map.of("filter", filters(scope, query.filter(), query.from(), query.to()))));
+        body.put("aggs", Map.of("groups", Map.of("terms", Map.of("field", groupField(query.groupBy()),
+                "size", query.buckets()))));
+        return body;
+    }
+
+    /**
+     * Every clause is built from values by the server: the model's text goes into {@code multi_match}, which reads
+     * it as words (no operators, no field names, no wildcards), and level and service into exact {@code term}s.
+     * The {@code _index} clause repeats the scope in the query, so an alias created after the resolve step still
+     * cannot bring in an index outside it.
+     */
+    private List<Object> filters(IndexScope scope, LogFilter filter, java.time.Instant from, java.time.Instant to) {
+        List<Object> indexClauses = new ArrayList<>();
+        for (String prefix : scope.prefixes()) {
+            indexClauses.add(Map.of("term", Map.of("_index", prefix)));
+            indexClauses.add(Map.of("prefix", Map.of("_index", prefix + "-")));
+        }
+        Map<String, Object> range = new LinkedHashMap<>();
+        range.put("gte", from.toString());
+        range.put("lt", to.toString());
+        range.put("format", "strict_date_optional_time");
+
+        List<Object> clauses = new ArrayList<>();
+        clauses.add(Map.of("range", Map.of(search.timestampField(), range)));
+        clauses.add(Map.of("bool", Map.of("should", indexClauses, "minimum_should_match", 1)));
+        if (filter.text() != null) {
+            Map<String, Object> words = new LinkedHashMap<>();
+            words.put("query", filter.text());
+            words.put("fields", search.queryFields());
+            words.put("type", "best_fields");
+            words.put("operator", "and");
+            words.put("lenient", true);
+            clauses.add(Map.of("multi_match", words));
+        }
+        if (filter.level() != null) {
+            clauses.add(Map.of("term", Map.of(search.levelField(), Map.of("value", filter.level(), "case_insensitive", true))));
+        }
+        if (filter.service() != null) {
+            clauses.add(Map.of("term", Map.of(search.serviceField(), filter.service())));
+        }
+        return clauses;
+    }
+
+    private String groupField(GroupBy groupBy) {
+        return switch (groupBy) {
+            case LEVEL -> search.levelField();
+            case SERVICE -> search.serviceField();
+            case HOST -> search.hostField();
+        };
     }
 
     /**
@@ -390,6 +474,22 @@ public class OpenSearchAdapter implements OpenSearchPort {
     @JsonIgnoreProperties(ignoreUnknown = true)
     record Hit(@JsonProperty("_index") String index, @JsonProperty("_id") String id,
             @JsonProperty("_source") Map<String, Object> source) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    record AggregateResponse(Aggregations aggregations) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    record Aggregations(Groups groups) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    record Groups(List<Bucket> buckets) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    record Bucket(Object key, @JsonProperty("doc_count") Long count) {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)

@@ -9,14 +9,17 @@ import org.junit.jupiter.api.Test;
 
 /**
  * The gateway puts {@code vs} and an empty {@code vsc} into every JWT of a call made through a link (C2, CC-027);
- * the server has to accept them. Narrowing by link scopes is not implemented here (M2).
+ * the server has to accept them. Narrowing by link scopes is tested in ResourcePolicyTest.
  */
 class GatewayLinkClaimsTest extends ServerTestSupport {
 
     @Test
     void aCallThroughALinkWithoutNarrowingIsServed() {
         try (McpSyncClient client = clientAs(
-                user -> user.username("jkowalski").virtualServer("logs-review", Map.of()),
+                user -> {
+                    reader(user);
+                    user.virtualServer("logs-review", Map.of());
+                },
                 "Bearer opensearch-token-of-jkowalski-5c1e", "user-secret")) {
             McpSchema.CallToolResult result = call(client, "get_document",
                     Map.of("index", "logs-team-a-2026.10.27", "id", "Xk3n8ZIBdLrT0q1aHf2p"));

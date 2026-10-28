@@ -20,6 +20,7 @@ final class UntrustedValues {
 
     static final int MAX_STRING = 2000;
     static final int MAX_PATH = 128;
+    static final int MAX_LABEL = 200;
     static final int MAX_ENTRIES = 100;
     static final int MAX_DEPTH = 6;
 
@@ -61,6 +62,13 @@ final class UntrustedValues {
     static UntrustedText text(String value) {
         String clean = TextHygiene.normalize(value);
         String kept = UntrustedText.cut(clean, MAX_STRING);
+        return UntrustedText.plainCut(kept, kept.length() < clean.length());
+    }
+
+    /** A value that names a group (a level, a service, a host): short, but still written by whoever shipped the log. */
+    static UntrustedText label(String value) {
+        String clean = TextHygiene.normalize(value);
+        String kept = UntrustedText.cut(clean, MAX_LABEL);
         return UntrustedText.plainCut(kept, kept.length() < clean.length());
     }
 

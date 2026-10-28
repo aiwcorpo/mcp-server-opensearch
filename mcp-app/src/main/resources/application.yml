@@ -31,6 +31,19 @@ aiwcorpo:
         jwks-uri: ${MCP_GATEWAY_JWKS_URI:}
       credential:
         connect-url: ${MCP_CONNECT_URL:}
+      # The signed policy bundle (C7), the same one the gateway evaluates. The server does not start without a first
+      # bundle, and state-dir keeps the last accepted revision across restarts so an older signed bundle is refused.
+      policy:
+        main:
+          url: ${MCP_POLICY_URL:}
+          key-id: ${MCP_POLICY_KEY_ID:}
+          public-key-file: ${MCP_POLICY_PUBLIC_KEY_FILE:}
+        state-dir: ${MCP_POLICY_STATE_DIR:}
+      # Description of this server for the registry (GET /mcp-manifest, C6); the tool entries come from the code.
+      manifest:
+        version: '@project.version@'
+        internal-url: ${MCP_INTERNAL_URL:}
+        accepted-credential-types: ${MCP_ACCEPTED_CREDENTIAL_TYPES:user-secret}
 
 opensearch:
   backend:
@@ -41,14 +54,22 @@ opensearch:
     max-response-size: 1MB
     # Plain http outside 'dev' only for the mocks of mcp-platform-dev; never in a real deployment.
     allow-plain-http: ${MCP_OPENSEARCH_ALLOW_PLAIN_HTTP:false}
-  # Index prefixes the server may touch at all (comma-separated). Starter beta narrows them further per caller
-  # with QueryScope; the server does not start without at least one.
+  # Index prefixes the server may touch at all (comma-separated). Each call is narrowed further to what the
+  # caller's mcp-opensearch-idx-* groups grant (QueryScope); the server does not start without at least one.
+  # Classification of indices for the policy (OpenSearch has no tags), e.g.
+  #   index-tags:
+  #     - prefix: logs-team-a-hr
+  #       tags: [restricted]
+  # or in the environment OPENSEARCH_SCOPE_INDEXTAGS_0_PREFIX / OPENSEARCH_SCOPE_INDEXTAGS_0_TAGS (README).
   scope:
     allowed-index-prefixes: ${MCP_OPENSEARCH_INDEX_PREFIXES:}
   search:
     timestamp-field: ${MCP_OPENSEARCH_TIMESTAMP_FIELD:@timestamp}
     query-fields: ${MCP_OPENSEARCH_QUERY_FIELDS:message}
     result-fields: ${MCP_OPENSEARCH_RESULT_FIELDS:@timestamp,message,log.level,service.name,host.name}
+    level-field: ${MCP_OPENSEARCH_LEVEL_FIELD:log.level}
+    service-field: ${MCP_OPENSEARCH_SERVICE_FIELD:service.name}
+    host-field: ${MCP_OPENSEARCH_HOST_FIELD:host.name}
     max-range: ${MCP_OPENSEARCH_MAX_RANGE:7d}
 
 management:
