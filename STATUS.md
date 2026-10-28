@@ -251,3 +251,7 @@ BOM alpha-10 -> alpha-11 (MIGRATION-3.0.md, sekcja "Zmiany w 3.0.0-alpha-11"). `
 | O-L1 komunikat o data streamie | nazwa dokładna -> `not_found_or_denied`; wzorzec zostaje `invalid_argument` |
 | O-L2 szacunek bajtów nie liczył CR | `\r`, `\b`, `\f` liczone podwójnie |
 | O-L3 brak testu | dopisany (j.w.) |
+
+## Starter 3.0.0-beta-4
+
+Podbicie BOM (MIGRATION "Z beta-3 na beta-4": profil `devstack` dla stosu dev w kontenerach, nic obowiązkowego dla serwera). Kod bez zmian.
