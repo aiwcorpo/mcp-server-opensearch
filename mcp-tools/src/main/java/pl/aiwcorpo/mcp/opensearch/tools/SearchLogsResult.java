@@ -13,15 +13,18 @@ import pl.aiwcorpo.mcp.opensearch.core.domain.LogHit;
 public record SearchLogsResult(String indexPattern, String from, String to, int returned, List<LogHit> hits,
         boolean truncated) {
 
-    /** Characters of text one result may carry; the platform refuses a result over 1 MB of UTF-8. */
-    static final int TEXT_BUDGET = 250_000;
+    /**
+     * Estimated JSON bytes one result may carry. The platform refuses a result over 1 MiB (1 048 576 bytes) as an
+     * internal error, so the budget leaves room for the envelope and for the estimate being rough.
+     */
+    static final int JSON_BUDGET = 900_000;
 
     static SearchLogsResult of(String indexPattern, String from, String to, List<LogHit> found) {
         List<LogHit> kept = new java.util.ArrayList<>();
         int used = 0;
         for (LogHit hit : found) {
-            used += hit.textSize();
-            if (used > TEXT_BUDGET && !kept.isEmpty()) {
+            used += hit.jsonSize();
+            if (used > JSON_BUDGET && !kept.isEmpty()) {
                 return new SearchLogsResult(indexPattern, from, to, kept.size(), kept, true);
             }
             kept.add(hit);

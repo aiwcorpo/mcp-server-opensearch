@@ -16,7 +16,7 @@ BOM alpha-6 -> alpha-10 (kontrakty 2.1.1). Źródło: `MIGRATION-3.0.md`, alpha-
 | `@Nullable` na polach, które system może zostawić puste | `LogHit.id`/`timestamp`, `IndexDocument.id`, `DocumentResult.id`, `LogField.path` |
 | Kolejność tekstu i spójna obsługa (wspólne 1 z rundy 2) | `UntrustedValues`: tekst, `normalize`, `cut`, `plainCut`; escapowanie `<`, `>`, `&` usunięte (klient nie renderuje HTML, ta sama reguła co gitlab i servicedesk). Test: `<script>alert(1)</script> & retried` wychodzi bez zmiany |
 | O2-L2 (klucze obiektów i `id` poza `UntrustedText`) | zamknięte: nazwy z dokumentu w `path` jako `UntrustedText`; `id` tylko w kształcie `get_document` (inaczej `null`), `timestamp` tylko data lub liczba |
-| Limit wyniku 1 MB (A9) | `search_logs` ma budżet 250000 znaków tekstu (`SearchLogsResult.of`), po przekroczeniu `truncated: true` i reszta trafień pominięta; do 100 wpisów na dokument; testy `SearchLogsResultTest`, `UntrustedValuesTest` |
+| Limit wyniku 1 MB (A9) | `search_logs` ma budżet 900000 bajtów szacowanego JSON (`SearchLogsResult.of`, od rundy 4; wcześniej 250000 znaków tekstu), po przekroczeniu `truncated: true` i reszta trafień pominięta; do 100 wpisów na dokument; testy `SearchLogsResultTest`, `UntrustedValuesTest` |
 | Limity na każdym poziomie schematu | bez zmian: `@ArgumentLimits` na wszystkich argumentach (`size` z `minimum`/`maximum`), wzorce zakotwiczone, brak `|` |
 | CC-074: `get_document` bez wiodącej kropki we wzorcu | `contractPattern = "OpenSearchIndexName"` publikuje od 2.1.1 `^[a-z0-9][a-z0-9._-]{0,254}$` (test `isListedAsReadOnlyWithAClosedSchema`); własny filtr kropki w narzędziu i kopia wzorca usunięte, wzorzec czytany z kontraktu. `.security` dalej `invalid_argument` (istniejące testy) |
 | O2-L1 test routingu aliasu | `anAliasWithOnlyARoutingIsNotRead`: aliasy `app-routed-index` i `app-routed-search` (sam routing, bez filtra) w stubie, `get_document` -> `not_found_or_denied` bez odczytu `_doc` |
@@ -26,8 +26,8 @@ BOM alpha-6 -> alpha-10 (kontrakty 2.1.1). Źródło: `MIGRATION-3.0.md`, alpha-
 | Claimy `vs` i `vsc:{}` | `GatewayLinkClaimsTest` |
 | Zgodność z mockiem ws-01 | mocka OpenSearch nie ma (STATUS wyżej); stub bez zmian w kształtach odpowiedzi |
 
-Weryfikacja: `./mvnw -B clean verify` (JDK 25) -> 69 testów, 0 błędów (mcp-app 55, mcp-application 8, mcp-integration 4,
-mcp-tools 2). Uruchomienie wg README: `dev` na 18541, health 200, `POST /mcp` bez JWT 401; proces zatrzymany.
+Weryfikacja: `./mvnw -B clean verify` (JDK 25) -> 71 testów, 0 błędów (mcp-app 55, mcp-application 8, mcp-integration 5,
+mcp-tools 3). Uruchomienie wg README: `dev` na 18541, health 200, `POST /mcp` bez JWT 401; proces zatrzymany.
 
 ## Co działa
 
@@ -173,3 +173,11 @@ pasuje do `OpenSearchIndexName` kontraktu, więc nie może być `@ResourceRef`; 
 | Wspólne 5 (kształt oznaczenia) | `UntrustedText` wg CC-072 | `SearchLogsToolTest`, `GetDocumentToolTest` |
 | Wspólne 6 (kod dla zasobu poza zakresem) | wyrównane do gitlab/servicedesk; doprecyzowanie C10/C7 to (b) | j.w. |
 | Template: https, 3xx, limit rozmiaru, `BackendResponseException`, `ProductionConfigurationTest`, `DevProfileLoopbackTest`, README (dwa sekcje uruchomienia), systemd, `install.sh`, prometheus | przeniesione | `application.yml`, `deploy/`, `README.md` |
+
+## Runda 4: poprawki przeglądu alpha-10 (2026-10-28)
+
+| Znalezisko | Status | Dowód |
+| --- | --- | --- |
+| O3-M1 budżet nie liczył narzutu JSON wpisu (`internal_error` przy 100 x 100 krótkich wpisach) | poprawione: budżet w bajtach szacowanego JSON (`LogField.jsonSize`: 250 B narzutu na wpis plus tekst w UTF-8, cudzysłowy, ukośniki i końce linii liczone podwójnie; `LogHit.jsonSize`: 400 B narzutu na trafienie), limit 900000 B przy limicie startera 1048576 B | `SearchLogsResultTest.manyShortEntriesAreCountedWithTheirJsonOverhead` (100 trafień po 100 wpisów: `truncated`, zserializowany wynik poniżej 1 MiB) |
+| O3-L1 cięcie `path` bez testu | test | `UntrustedValuesTest.aLongKeyOfADocumentIsCutInThePathAndSaysSo` |
+| A10-M1 `DevProfileLoopbackTest` | bez zmian, rozwiąże starter alpha-11 | |

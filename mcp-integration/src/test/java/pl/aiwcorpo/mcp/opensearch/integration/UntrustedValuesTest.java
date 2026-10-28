@@ -56,4 +56,17 @@ class UntrustedValuesTest {
         assertThat(many.fields().get(7).path().text()).isEqualTo("[7]");
         assertThat(UntrustedValues.flatten(Map.of("message", List.of())).truncated()).isFalse();
     }
+
+    @Test
+    void aLongKeyOfADocumentIsCutInThePathAndSaysSo() {
+        Map<String, Object> source = new LinkedHashMap<>();
+        source.put("message", Map.of("k".repeat(1000), "v"));
+
+        UntrustedValues.Flattened flat = UntrustedValues.flatten(source);
+
+        assertThat(flat.fields()).singleElement().satisfies(field -> {
+            assertThat(field.path().text()).hasSizeLessThanOrEqualTo(UntrustedValues.MAX_PATH);
+            assertThat(field.path().truncated()).isTrue();
+        });
+    }
 }

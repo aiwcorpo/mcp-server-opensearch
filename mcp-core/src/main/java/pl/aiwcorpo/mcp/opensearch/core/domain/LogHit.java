@@ -19,7 +19,11 @@ public record LogHit(String index, @Nullable String id, @Nullable String timesta
         data = List.copyOf(data);
     }
 
-    public int textSize() {
-        return data.stream().mapToInt(LogField::textSize).sum() + index.length();
+    /** Upper estimate of the bytes this hit takes in the JSON result, see {@link LogField#jsonSize()}. */
+    public int jsonSize() {
+        return HIT_OVERHEAD + LogField.jsonBytes(index) + data.stream().mapToInt(LogField::jsonSize).sum();
     }
+
+    /** Keys, {@code id} (at most 256 characters), {@code timestamp} and the array around {@code data}. */
+    private static final int HIT_OVERHEAD = 400;
 }
