@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  mcp-core: domain and ports, plain Java. No Spring and no MCP here, so business rules stay testable
-  without the transport and the framework.
+  mcp-core: domain and ports. No Spring beans and no MCP transport here, so business rules stay testable
+  without them; the starter is a dependency only for the shared result type UntrustedText.
 -->
 <project xmlns="http://maven.apache.org/POM/4.0.0"
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
@@ -13,5 +13,11 @@
         <version>0.1.0-SNAPSHOT</version>
     </parent>
     <artifactId>mcp-core</artifactId>
+    <dependencies>
+        <dependency>
+            <groupId>pl.aiwcorpo.mcp</groupId>
+            <artifactId>mcp-platform-starter</artifactId>
+        </dependency>
+    </dependencies>
     <name>mcp-opensearch :: Core (domain + ports)</name>
 </project>

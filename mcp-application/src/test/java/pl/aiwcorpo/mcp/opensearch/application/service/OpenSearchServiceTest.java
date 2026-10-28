@@ -78,7 +78,7 @@ class OpenSearchServiceTest {
 
     @Test
     void hitsOutsideTheScopeAreDroppedEvenIfOpenSearchReturnsThem() {
-        hits = List.of(new LogHit("logs-team-a-1", "1", null, Map.of()), new LogHit("secret-1", "2", null, Map.of()));
+        hits = List.of(new LogHit("logs-team-a-1", "1", null, List.of(), false), new LogHit("secret-1", "2", null, List.of(), false));
 
         assertThat(service.searchLogs(query("logs-team-a-", true))).extracting(LogHit::index).containsExactly("logs-team-a-1");
     }
@@ -100,7 +100,7 @@ class OpenSearchServiceTest {
 
     @Test
     void aDocumentFromAnotherIndexThanAskedIsNotReturned() {
-        document = new IndexDocument("secret-1", "1", Map.of());
+        document = new IndexDocument("secret-1", "1", List.of(), false);
 
         assertThatThrownBy(() -> service.getDocument("logs-team-a-1", "1")).isInstanceOf(NotFoundOrDeniedException.class);
     }
@@ -133,7 +133,7 @@ class OpenSearchServiceTest {
                 List.of(new ResolvedIndices.Alias("logs-team-a-x", List.of("logs-team-a-1"))), List.of());
         byName.put("logs-team-a-1", new ResolvedIndices(List.of(new ResolvedIndices.Index("logs-team-a-1", false)),
                 List.of(), List.of()));
-        document = new IndexDocument("logs-team-a-1", "1", Map.of());
+        document = new IndexDocument("logs-team-a-1", "1", List.of(), false);
 
         assertThat(service.getDocument("logs-team-a-x", "1").id()).isEqualTo("1");
         aliasRestricted = true;

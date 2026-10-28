@@ -1,109 +1,95 @@
 package pl.aiwcorpo.mcp.opensearch.integration;
 
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import pl.aiwcorpo.mcp.opensearch.core.domain.UntrustedText;
+import java.util.regex.Pattern;
+import org.jspecify.annotations.Nullable;
+import pl.aiwcorpo.mcp.opensearch.core.domain.LogField;
+import pl.aiwcorpo.mcp.platform.text.TextHygiene;
+import pl.aiwcorpo.mcp.platform.text.UntrustedText;
 
 /**
  * Document values on their way to the model. Log lines are written by anyone who can make an application log
- * something, so they are data at best and a prompt injection at worst: every string becomes an
- * {@link UntrustedText}, markup is escaped (no raw HTML reaches the client), control characters other than tab
- * and newline are dropped, and size is bounded.
+ * something, so they are data at best and a prompt injection at worst: every value and every name taken from a
+ * document becomes an {@link UntrustedText}. The text is not escaped (the client does not render it as HTML);
+ * order as the starter prescribes: the JSON value as text, {@link TextHygiene#normalize}, the cut, the value built
+ * from the cut text. Objects and lists are flattened to entries, bounded in depth, count and string length.
  */
 final class UntrustedValues {
 
     static final int MAX_STRING = 2000;
-    static final int MAX_ITEMS = 50;
+    static final int MAX_PATH = 128;
+    static final int MAX_ENTRIES = 100;
     static final int MAX_DEPTH = 6;
-    private static final String TRUNCATED = "...[truncated]";
+
+    /** The shape {@code get_document} accepts for an id; anything else is not handed out as an id. */
+    static final Pattern DOCUMENT_ID = Pattern.compile("^[A-Za-z0-9_-][A-Za-z0-9_.:@+=-]{0,255}$");
+    private static final Pattern TIMESTAMP = Pattern.compile("^[0-9][0-9TZ:.+-]{0,39}$");
 
     private UntrustedValues() {
     }
 
-    static Map<String, Object> cleanObject(Map<?, ?> source) {
-        return cleanMap(source, 0);
+    /** The result of flattening: entries and whether the entry limit cut some off. */
+    record Flattened(List<LogField> fields, boolean truncated) {
     }
 
-    /** For identifiers and timestamps, which stay plain strings: cleaned, not wrapped. */
-    static String cleanText(String value) {
-        if (value == null) {
+    @Nullable
+    static String documentId(@Nullable String id) {
+        return id != null && DOCUMENT_ID.matcher(id).matches() ? id : null;
+    }
+
+    @Nullable
+    static String timestamp(@Nullable Object value) {
+        if (value == null || value instanceof Map || value instanceof List) {
             return null;
         }
-        Cleaned cleaned = sanitize(value);
-        return cleaned.truncated() ? cleaned.text() + TRUNCATED : cleaned.text();
+        String text = String.valueOf(value);
+        return TIMESTAMP.matcher(text).matches() ? text : null;
+    }
+
+    /** {@code picked} holds the configured fields by their configured name, in configuration order. */
+    static Flattened flatten(Map<String, Object> picked) {
+        List<LogField> fields = new ArrayList<>();
+        boolean[] truncated = {false};
+        for (Map.Entry<String, Object> field : picked.entrySet()) {
+            add(fields, truncated, field.getKey(), "", field.getValue(), 0);
+        }
+        return new Flattened(fields, truncated[0]);
     }
 
     static UntrustedText text(String value) {
-        Cleaned cleaned = sanitize(value);
-        return UntrustedText.plain(cleaned.text(), cleaned.truncated());
+        String clean = TextHygiene.normalize(value);
+        String kept = UntrustedText.cut(clean, MAX_STRING);
+        return UntrustedText.plainCut(kept, kept.length() < clean.length());
     }
 
-    private record Cleaned(String text, boolean truncated) {
+    private static UntrustedText path(String value) {
+        String clean = TextHygiene.normalize(value);
+        String kept = UntrustedText.cut(clean, MAX_PATH);
+        return UntrustedText.plainCut(kept, kept.length() < clean.length());
     }
 
-    private static Cleaned sanitize(String value) {
-        StringBuilder out = new StringBuilder(Math.min(value.length(), MAX_STRING) + 16);
-        boolean truncated = false;
-        for (int i = 0; i < value.length(); i++) {
-            if (out.length() >= MAX_STRING) {
-                truncated = true;
-                break;
-            }
-            char c = value.charAt(i);
-            switch (c) {
-                case '<' -> out.append("&lt;");
-                case '>' -> out.append("&gt;");
-                case '&' -> out.append("&amp;");
-                default -> {
-                    if (c == '\n' || c == '\t' || !Character.isISOControl(c)) {
-                        out.append(c);
-                    }
-                }
-            }
+    private static void add(List<LogField> fields, boolean[] truncated, String name, String path, Object value,
+            int depth) {
+        if (value == null) {
+            return;
         }
-        if (out.length() > MAX_STRING) {
-            out.setLength(MAX_STRING);
-            truncated = true;
-        }
-        return new Cleaned(out.toString(), truncated);
-    }
-
-    private static Object clean(Object value, int depth) {
-        if (value == null || value instanceof Number || value instanceof Boolean) {
-            return value;
-        }
-        if (depth >= MAX_DEPTH) {
-            return TRUNCATED;
+        if (fields.size() >= MAX_ENTRIES || (depth >= MAX_DEPTH && (value instanceof Map || value instanceof List))) {
+            truncated[0] = true;
+            return;
         }
         if (value instanceof Map<?, ?> map) {
-            return cleanMap(map, depth + 1);
-        }
-        if (value instanceof List<?> list) {
-            List<Object> cleaned = new ArrayList<>();
-            for (Object item : list.subList(0, Math.min(list.size(), MAX_ITEMS))) {
-                cleaned.add(clean(item, depth + 1));
+            for (Map.Entry<?, ?> entry : map.entrySet()) {
+                add(fields, truncated, name, path.isEmpty() ? String.valueOf(entry.getKey())
+                        : path + "." + entry.getKey(), entry.getValue(), depth + 1);
             }
-            if (list.size() > MAX_ITEMS) {
-                cleaned.add(TRUNCATED);
+        } else if (value instanceof List<?> list) {
+            for (int i = 0; i < list.size(); i++) {
+                add(fields, truncated, name, path + "[" + i + "]", list.get(i), depth + 1);
             }
-            return cleaned;
+        } else {
+            fields.add(new LogField(name, path.isEmpty() ? null : path(path), text(String.valueOf(value))));
         }
-        return text(String.valueOf(value));
-    }
-
-    private static Map<String, Object> cleanMap(Map<?, ?> map, int depth) {
-        Map<String, Object> cleaned = new LinkedHashMap<>();
-        int count = 0;
-        for (Map.Entry<?, ?> entry : map.entrySet()) {
-            if (count++ >= MAX_ITEMS) {
-                cleaned.put("_truncated", true);
-                break;
-            }
-            String key = cleanText(String.valueOf(entry.getKey()));
-            cleaned.put(key.length() > 128 ? key.substring(0, 128) : key, clean(entry.getValue(), depth));
-        }
-        return cleaned;
     }
 }

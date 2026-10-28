@@ -1,12 +1,25 @@
 package pl.aiwcorpo.mcp.opensearch.core.domain;
 
-import java.util.Map;
+import java.util.List;
+import org.jspecify.annotations.Nullable;
 
 /**
  * One log document, reduced to the configured result fields.
  *
- * @param timestamp value of the configured timestamp field as OpenSearch stored it, or null
- * @param data      the configured fields of {@code _source}, already cleaned as untrusted text
+ * @param id        the document id when it has the shape {@code get_document} accepts, otherwise null (an id is
+ *                  free text up to 512 bytes and comes from whoever shipped the log)
+ * @param timestamp value of the configured timestamp field when it looks like a date or a number, or null
+ * @param data      the configured fields of {@code _source}, as text
+ * @param truncated whether {@code data} was cut at the entry limit
  */
-public record LogHit(String index, String id, String timestamp, Map<String, Object> data) {
+public record LogHit(String index, @Nullable String id, @Nullable String timestamp, List<LogField> data,
+        boolean truncated) {
+
+    public LogHit {
+        data = List.copyOf(data);
+    }
+
+    public int textSize() {
+        return data.stream().mapToInt(LogField::textSize).sum() + index.length();
+    }
 }

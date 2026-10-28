@@ -168,8 +168,10 @@ public class OpenSearchAdapter implements OpenSearchPort {
         }
         List<LogHit> hits = new ArrayList<>();
         for (Hit hit : response.hits().hits()) {
-            hits.add(new LogHit(hit.index(), UntrustedValues.cleanText(hit.id()),
-                    timestamp(hit.source()), pick(hit.source())));
+            UntrustedValues.Flattened data = UntrustedValues.flatten(pick(hit.source()));
+            hits.add(new LogHit(hit.index(), UntrustedValues.documentId(hit.id()),
+                    UntrustedValues.timestamp(valueAt(hit.source(), search.timestampField())), data.fields(),
+                    data.truncated()));
         }
         return hits;
     }
@@ -199,8 +201,9 @@ public class OpenSearchAdapter implements OpenSearchPort {
         if (!Boolean.TRUE.equals(response.found()) || response.index() == null) {
             return Optional.empty();
         }
-        return Optional.of(new IndexDocument(response.index(), UntrustedValues.cleanText(response.id()),
-                pick(response.source())));
+        UntrustedValues.Flattened data = UntrustedValues.flatten(pick(response.source()));
+        return Optional.of(new IndexDocument(response.index(), UntrustedValues.documentId(response.id()),
+                data.fields(), data.truncated()));
     }
 
     /**
@@ -257,11 +260,6 @@ public class OpenSearchAdapter implements OpenSearchPort {
         return body;
     }
 
-    private String timestamp(Map<String, Object> source) {
-        Object value = valueAt(source, search.timestampField());
-        return value == null || value instanceof Map || value instanceof List ? null : UntrustedValues.cleanText(String.valueOf(value));
-    }
-
     /**
      * The configured result fields only, keyed by their configured path. OpenSearch already applies the same
      * list as {@code _source} includes; picking again here keeps a misbehaving cluster or a mapping surprise
@@ -278,11 +276,14 @@ public class OpenSearchAdapter implements OpenSearchPort {
                 picked.put(field, value);
             }
         }
-        return UntrustedValues.cleanObject(picked);
+        return picked;
     }
 
     /** {@code a.b} as a literal key first (flattened documents), then as a path through objects. */
     private static Object valueAt(Map<String, Object> source, String path) {
+        if (source == null) {
+            return null;
+        }
         if (source.containsKey(path)) {
             return source.get(path);
         }

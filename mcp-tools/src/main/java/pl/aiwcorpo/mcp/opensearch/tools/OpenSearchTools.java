@@ -1,5 +1,8 @@
 package pl.aiwcorpo.mcp.opensearch.tools;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.UncheckedIOException;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
@@ -20,6 +23,8 @@ import pl.aiwcorpo.mcp.platform.error.InvalidToolArgumentException;
 import pl.aiwcorpo.mcp.platform.guard.RiskLevel;
 import pl.aiwcorpo.mcp.platform.guard.ToolRisk;
 import pl.aiwcorpo.mcp.platform.input.ArgumentLimits;
+import pl.aiwcorpo.mcp.platform.text.TextHygiene;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * The MCP tools of this server. Every argument is untrusted input from a model. Parameter names are the public
@@ -29,8 +34,7 @@ import pl.aiwcorpo.mcp.platform.input.ArgumentLimits;
  *
  * <p>Index arguments are checked here for syntax and fail closed on everything OpenSearch would read as more
  * than one plain name: lists, exclusions, date math, remote clusters, {@code _all}, a bare {@code *} and
- * hidden {@code .} indices (the contract pattern {@code OpenSearchIndexName} admits a leading dot; this server
- * does not). Prefix and alias checks follow in {@code OpenSearchService}.
+ * hidden {@code .} indices. Prefix and alias checks follow in {@code OpenSearchService}.
  */
 @Service
 public class OpenSearchTools {
@@ -43,8 +47,11 @@ public class OpenSearchTools {
     /** Document ids that fit a URL path segment; the same text goes to the input schema. */
     private static final String DOCUMENT_ID_REGEX = "^[A-Za-z0-9_-][A-Za-z0-9_.:@+=-]{0,255}$";
     private static final Pattern INDEX_PATTERN = Pattern.compile(INDEX_PATTERN_REGEX);
-    /** {@code OpenSearchIndexName} of mcp-contracts 2.0.2 without a leading dot. */
-    private static final Pattern INDEX_NAME = Pattern.compile("[a-z0-9][a-z0-9._-]{0,254}");
+    /**
+     * {@code OpenSearchIndexName} read from the contract on the classpath, the same pattern the input schema
+     * publishes. Since contracts 2.1 (CC-074) it excludes a leading dot itself.
+     */
+    private static final Pattern INDEX_NAME = contractPattern("OpenSearchIndexName");
     /** OpenSearch ids are free text up to 512 bytes; this keeps ids that fit a URL path segment unescaped. */
     private static final Pattern DOCUMENT_ID = Pattern.compile(DOCUMENT_ID_REGEX);
     private static final int MAX_QUERY = 512;
@@ -87,7 +94,7 @@ public class OpenSearchTools {
         }
         int count = validSize(size);
         List<LogHit> hits = useCase.searchLogs(new LogQuery(pattern, text, start, end, count));
-        return new SearchLogsResult(pattern.toString(), start.toString(), end.toString(), hits.size(), hits);
+        return SearchLogsResult.of(pattern.toString(), start.toString(), end.toString(), hits);
     }
 
     @Tool(name = GET_DOCUMENT, description = "Returns one document by index and id: index, id"
@@ -99,7 +106,7 @@ public class OpenSearchTools {
             @ToolParam(description = "Document id as returned by search_logs")
             @ArgumentLimits(minLength = 1, maxLength = 256, pattern = DOCUMENT_ID_REGEX) String id) {
         IndexDocument document = useCase.getDocument(validIndexName(index), validDocumentId(id));
-        return new DocumentResult(document.index(), document.id(), document.data());
+        return new DocumentResult(document.index(), document.id(), document.data(), document.truncated());
     }
 
     static IndexPattern validPattern(String value) {
@@ -124,9 +131,6 @@ public class OpenSearchTools {
     }
 
     static String validIndexName(String value) {
-        if (value != null && value.startsWith(".")) {
-            throw new InvalidToolArgumentException("index must not name hidden or system indices (leading '.')");
-        }
         if (value == null || !INDEX_NAME.matcher(value).matches()) {
             throw new InvalidToolArgumentException("index must be one concrete index name: 1-255 lower-case letters,"
                     + " digits, '.', '_' or '-', starting with a letter or digit");
@@ -142,14 +146,29 @@ public class OpenSearchTools {
         return value;
     }
 
+    private static Pattern contractPattern(String definition) {
+        String resource = "/mcp-contracts/schemas/common.schema.json";
+        try (InputStream in = OpenSearchTools.class.getResourceAsStream(resource)) {
+            if (in == null) {
+                throw new IllegalStateException(resource + " is missing: mcp-contracts must be on the classpath");
+            }
+            String pattern = JsonMapper.builder().build().readTree(in).path("$defs").path(definition)
+                    .path("pattern").asString(null);
+            if (pattern == null) {
+                throw new IllegalStateException(definition + " has no pattern in common.schema.json");
+            }
+            return Pattern.compile(pattern);
+        } catch (IOException ex) {
+            throw new UncheckedIOException(ex);
+        }
+    }
+
     private static String validQuery(String value) {
         if (value == null || value.isBlank() || value.length() > MAX_QUERY) {
             throw new InvalidToolArgumentException("query must be 1-" + MAX_QUERY + " characters of text");
         }
-        for (int i = 0; i < value.length(); i++) {
-            if (Character.isISOControl(value.charAt(i))) {
-                throw new InvalidToolArgumentException("query must not contain control characters");
-            }
+        if (TextHygiene.firstProblem(value, false) != null) {
+            throw new InvalidToolArgumentException("query must not contain control or invisible characters");
         }
         return value;
     }
