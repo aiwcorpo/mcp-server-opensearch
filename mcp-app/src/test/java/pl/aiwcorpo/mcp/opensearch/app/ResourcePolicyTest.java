@@ -62,6 +62,19 @@ class ResourcePolicyTest extends ServerTestSupport {
     }
 
     @Test
+    void searchingARestrictedIndexByExactNameAnswersLikeAMissingOne() {
+        try (McpSyncClient client = clientWithCredential(PAT)) {
+            String missing = text(call(client, "search_logs", search("logs-team-a-nothing")));
+            McpSchema.CallToolResult restricted = call(client, "search_logs", search("logs-team-a-hr-1"));
+
+            assertThat(restricted.isError()).isTrue();
+            assertThat(text(restricted)).contains(NOT_FOUND_OR_DENIED).isEqualTo(missing);
+            assertThat(text(call(client, "search_logs", search("logs-team-b-stream")))).as("a data stream by name").isEqualTo(missing);
+        }
+        assertThat(BACKEND.requests()).noneMatch(r -> r.path().endsWith("/_search"));
+    }
+
+    @Test
     void aCallerWithoutTheReadGroupGetsAccessDeniedAndNothingReachesOpenSearch() {
         try (McpSyncClient client = clientInGroups(PAT, GRANT_TEAM_A, GRANT_TEAM_B)) {
             for (String tool : List.of("search_logs", "get_document")) {

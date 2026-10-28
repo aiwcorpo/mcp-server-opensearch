@@ -242,3 +242,12 @@ mcp-tools 3). Uruchomienie wg README: `dev` na 18541, health 200, `POST /mcp` be
 ## Runda 5: starter alpha-11 (2026-10-28)
 
 BOM alpha-10 -> alpha-11 (MIGRATION-3.0.md, sekcja "Zmiany w 3.0.0-alpha-11"). `DevProfileLoopbackTest` sprawdza regułę guarda przez `DevProfileGuardAssertions.assertDevProfileLoopbackRule()` (A10-M1), więc przechodzi także w kontenerze CI. `./mvnw clean verify`: 71 testów, 0 błędów; `INVOCATION_ID=ci ./mvnw -B verify`: bez różnic. Start lokalny w profilu `dev`: health 200, POST /mcp bez JWT 401.
+
+## Poprawki przeglądu M3 (2026-10-28)
+
+| Znalezisko | Status |
+| --- | --- |
+| O-M1 `search_logs` z nazwą restricted odpowiadał pustym sukcesem (wyrocznia) | `searchLogs` dostaje predykat polityki jak `aggregateLogs`; nazwa bez gwiazdki bez dozwolonego indeksu (także alias z niedozwolonym celem nie pomaga) -> `not_found_or_denied`, wzorzec -> pusty wynik. Test `searchingARestrictedIndexByExactNameAnswersLikeAMissingOne` (odpowiedź równa odpowiedzi dla nieistniejącego) |
+| O-L1 komunikat o data streamie | nazwa dokładna -> `not_found_or_denied`; wzorzec zostaje `invalid_argument` |
+| O-L2 szacunek bajtów nie liczył CR | `\r`, `\b`, `\f` liczone podwójnie |
+| O-L3 brak testu | dopisany (j.w.) |

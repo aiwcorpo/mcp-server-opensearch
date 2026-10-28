@@ -14,12 +14,15 @@ import pl.aiwcorpo.mcp.opensearch.core.domain.ResolvedIndex;
 public interface OpenSearchUseCase {
 
     /**
+     * {@code readable} says whether the policy lets the caller read an index; a name that reaches no readable index
+     * is answered like a missing one, so the result does not tell a restricted index from a nonexistent one.
+     *
      * @throws pl.aiwcorpo.mcp.opensearch.core.domain.NotFoundOrDeniedException when the caller may query no index,
      *         when the pattern reaches an index outside the allowed prefixes (alias, hidden index) or when
      *         OpenSearch refuses it
      * @throws pl.aiwcorpo.mcp.opensearch.core.domain.IndexOutsideScopeException when no allowed prefix covers the pattern
      */
-    List<LogHit> searchLogs(LogQuery query);
+    List<LogHit> searchLogs(LogQuery query, Predicate<String> readable);
 
     /**
      * Counts by one field over the concrete indices the pattern names and {@code readable} accepts; counts cannot

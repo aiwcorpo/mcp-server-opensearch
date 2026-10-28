@@ -52,13 +52,23 @@ public class OpenSearchService implements OpenSearchUseCase {
     }
 
     @Override
-    public List<LogHit> searchLogs(LogQuery query) {
+    public List<LogHit> searchLogs(LogQuery query, Predicate<String> readable) {
         IndexScope scope = requireScope();
         String expression = scope.expressionFor(query.pattern()).orElseThrow(IndexOutsideScopeException::new);
         ResolvedIndices resolved = openSearch.resolve(expression).orElseThrow(NotFoundOrDeniedException::new);
-        requireInsideScope(resolved, scope);
-        if (resolved.isEmpty()) {
-            // A named index that is missing must look like one the caller may not read (403 on resolve).
+        try {
+            requireInsideScope(resolved, scope);
+        } catch (UnsupportedIndexTargetException dataStream) {
+            // For a name the caller typed, "this is a data stream" would tell a restricted stream from a missing index.
+            if (!query.pattern().wildcard()) {
+                throw new NotFoundOrDeniedException();
+            }
+            throw dataStream;
+        }
+        List<String> concrete = new java.util.ArrayList<>(resolved.indices().stream().map(ResolvedIndices.Index::name).toList());
+        resolved.aliases().forEach(alias -> concrete.addAll(alias.indices()));
+        // A name with nothing the policy lets through looks like a missing index, and a pattern like one matching nothing.
+        if (concrete.stream().noneMatch(readable) || concrete.isEmpty()) {
             if (!query.pattern().wildcard()) {
                 throw new NotFoundOrDeniedException();
             }

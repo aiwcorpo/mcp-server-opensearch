@@ -127,7 +127,8 @@ public class OpenSearchTools {
         Instant end = validTime("to", to);
         validRange(start, end);
         int count = validSize(size);
-        List<LogHit> hits = useCase.searchLogs(new LogQuery(pattern, filter, start, end, count));
+        List<LogHit> hits = useCase.searchLogs(new LogQuery(pattern, filter, start, end, count),
+                index -> policy.allows(indices.resource(index)));
         return SearchLogsResult.of(pattern.toString(), start.toString(), end.toString(), hits);
     }
 

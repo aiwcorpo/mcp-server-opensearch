@@ -32,7 +32,7 @@ public record LogField(String name, @Nullable UntrustedText path, UntrustedText 
         int bytes = 0;
         for (int i = 0; i < text.length(); i++) {
             char c = text.charAt(i);
-            if (c == '"' || c == '\\' || c == '\n' || c == '\t') {
+            if (c == '"' || c == '\\' || c == '\n' || c == '\t' || c == '\r' || c == '\b' || c == '\f') {
                 bytes += 2;
             } else if (c < 0x80) {
                 bytes++;

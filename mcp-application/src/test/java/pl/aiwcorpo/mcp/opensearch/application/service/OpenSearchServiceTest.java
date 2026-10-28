@@ -106,12 +106,12 @@ class OpenSearchServiceTest {
     void hitsOutsideTheScopeAreDroppedEvenIfOpenSearchReturnsThem() {
         hits = List.of(new LogHit("logs-team-a-1", "1", null, List.of(), false), new LogHit("secret-1", "2", null, List.of(), false));
 
-        assertThat(service.searchLogs(query("logs-team-a-", true))).extracting(LogHit::index).containsExactly("logs-team-a-1");
+        assertThat(service.searchLogs(query("logs-team-a-", true), index -> true)).extracting(LogHit::index).containsExactly("logs-team-a-1");
     }
 
     @Test
     void aPatternOutsideTheScopeNeverReachesOpenSearch() {
-        assertThatThrownBy(() -> service.searchLogs(query("secret", true))).isInstanceOf(IndexOutsideScopeException.class);
+        assertThatThrownBy(() -> service.searchLogs(query("secret", true), index -> true)).isInstanceOf(IndexOutsideScopeException.class);
         assertThat(searched).isEmpty();
     }
 
@@ -120,7 +120,7 @@ class OpenSearchServiceTest {
         resolved = new ResolvedIndices(List.of(),
                 List.of(new ResolvedIndices.Alias("logs-team-a-x", List.of("logs-team-a-1", "secret-1"))), List.of());
 
-        assertThatThrownBy(() -> service.searchLogs(query("logs-team-a-x", false))).isInstanceOf(NotFoundOrDeniedException.class);
+        assertThatThrownBy(() -> service.searchLogs(query("logs-team-a-x", false), index -> true)).isInstanceOf(NotFoundOrDeniedException.class);
         assertThat(searched).isEmpty();
     }
 
@@ -138,7 +138,7 @@ class OpenSearchServiceTest {
         byName.put("logs-team-a-hidden", new ResolvedIndices(List.of(new ResolvedIndices.Index("logs-team-a-hidden", true)),
                 List.of(), List.of()));
 
-        assertThatThrownBy(() -> service.searchLogs(query("logs-team-a-x", false))).isInstanceOf(NotFoundOrDeniedException.class);
+        assertThatThrownBy(() -> service.searchLogs(query("logs-team-a-x", false), index -> true)).isInstanceOf(NotFoundOrDeniedException.class);
         assertThat(service.resolveIndex("logs-team-a-x")).isEmpty();
         assertThat(searched).isEmpty();
         assertThat(resolvedExpressions).contains("logs-team-a-hidden");
@@ -150,20 +150,40 @@ class OpenSearchServiceTest {
                 List.of(new ResolvedIndices.Alias("logs-team-a-x", List.of("logs-team-a-1"))), List.of());
         byName.put("logs-team-a-1", new ResolvedIndices(List.of(), List.of(), List.of()));
 
-        assertThatThrownBy(() -> service.searchLogs(query("logs-team-a-x", false))).isInstanceOf(NotFoundOrDeniedException.class);
+        assertThatThrownBy(() -> service.searchLogs(query("logs-team-a-x", false), index -> true)).isInstanceOf(NotFoundOrDeniedException.class);
     }
 
     @Test
     void anEmptyScopeRefusesEverythingBeforeAnyRequestToOpenSearch() {
         scope = new IndexScope(List.of());
 
-        assertThatThrownBy(() -> service.searchLogs(query("logs-team-a", true))).isInstanceOf(NotFoundOrDeniedException.class);
+        assertThatThrownBy(() -> service.searchLogs(query("logs-team-a", true), index -> true)).isInstanceOf(NotFoundOrDeniedException.class);
         assertThatThrownBy(() -> service.aggregateLogs(aggregation("logs-team-a", true), index -> true))
                 .isInstanceOf(NotFoundOrDeniedException.class);
         assertThatThrownBy(() -> service.getDocument("logs-team-a-1", "1")).isInstanceOf(NotFoundOrDeniedException.class);
         assertThat(service.resolveIndex("logs-team-a-1")).isEmpty();
         assertThat(resolvedExpressions).isEmpty();
         assertThat(searched).isEmpty();
+    }
+
+    @Test
+    void anExactNameWithNothingReadableLooksMissingAndAWildcardLooksEmpty() {
+        resolved = indices("logs-team-a-hr-1");
+
+        assertThatThrownBy(() -> service.searchLogs(query("logs-team-a-hr-1", false), index -> false))
+                .isInstanceOf(NotFoundOrDeniedException.class);
+        assertThat(service.searchLogs(query("logs-team-a-hr-", true), index -> false)).isEmpty();
+        assertThat(searched).isEmpty();
+    }
+
+    @Test
+    void aDataStreamNamedExactlyLooksMissing() {
+        resolved = new ResolvedIndices(List.of(), List.of(), List.of("logs-team-a-s"));
+
+        assertThatThrownBy(() -> service.searchLogs(query("logs-team-a-s", false), index -> true))
+                .isInstanceOf(NotFoundOrDeniedException.class);
+        assertThatThrownBy(() -> service.searchLogs(query("logs-team-a-s", true), index -> true))
+                .isInstanceOf(UnsupportedIndexTargetException.class);
     }
 
     @Test
@@ -175,7 +195,7 @@ class OpenSearchServiceTest {
         assertThatThrownBy(() -> service.aggregateLogs(aggregation("logs-team-a-", true), index -> true))
                 .isInstanceOf(AggregationOverAliasException.class);
         assertThat(aggregated).isEmpty();
-        service.searchLogs(query("logs-team-a-", true));
+        service.searchLogs(query("logs-team-a-", true), index -> true);
         assertThat(searched).hasSize(1);
     }
 
