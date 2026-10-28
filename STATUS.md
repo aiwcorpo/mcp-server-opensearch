@@ -2,7 +2,7 @@
 
 M1: osiągnięty (2026-10-27, runda 2; 2026-10-28 przeniesiony na starter 3.0.0-alpha-10) - `search_logs` i `get_document` (READ_ONLY) na starterze 3.0.0-alpha-10, walidacja argumentów przez starter (C10), jeden wzorzec indeksu od prefiksu z konfiguracji, aliasy rozwiązywane i sprawdzane (cele ukryte, filtr), poświadczenie z C3, 69 testów na stubie OpenSearch 2.x.
 
-Starter: BOM `pl.aiwcorpo.mcp:mcp-platform-bom:3.0.0-alpha-10` (kontrakty 2.1.1, Spring Boot 4.1.0, Spring AI
+Starter: BOM `pl.aiwcorpo.mcp:mcp-platform-bom:3.0.0-alpha-11` (kontrakty 2.1.1, Spring Boot 4.1.0, Spring AI
 2.0.0, Java 25). Repo wygenerowane `new-server.sh opensearch` z template'u 7f65f8f (pierwszy commit); zmiany template'u do c1258c4
 przeniesione w rundzie 2. M2 nie jest zaczęty.
 
@@ -181,3 +181,7 @@ pasuje do `OpenSearchIndexName` kontraktu, więc nie może być `@ResourceRef`; 
 | O3-M1 budżet nie liczył narzutu JSON wpisu (`internal_error` przy 100 x 100 krótkich wpisach) | poprawione: budżet w bajtach szacowanego JSON (`LogField.jsonSize`: 250 B narzutu na wpis plus tekst w UTF-8, cudzysłowy, ukośniki i końce linii liczone podwójnie; `LogHit.jsonSize`: 400 B narzutu na trafienie), limit 900000 B przy limicie startera 1048576 B | `SearchLogsResultTest.manyShortEntriesAreCountedWithTheirJsonOverhead` (100 trafień po 100 wpisów: `truncated`, zserializowany wynik poniżej 1 MiB) |
 | O3-L1 cięcie `path` bez testu | test | `UntrustedValuesTest.aLongKeyOfADocumentIsCutInThePathAndSaysSo` |
 | A10-M1 `DevProfileLoopbackTest` | bez zmian, rozwiąże starter alpha-11 | |
+
+## Runda 5: starter alpha-11 (2026-10-28)
+
+BOM alpha-10 -> alpha-11 (MIGRATION-3.0.md, sekcja "Zmiany w 3.0.0-alpha-11"). `DevProfileLoopbackTest` sprawdza regułę guarda przez `DevProfileGuardAssertions.assertDevProfileLoopbackRule()` (A10-M1), więc przechodzi także w kontenerze CI. `./mvnw clean verify`: 71 testów, 0 błędów; `INVOCATION_ID=ci ./mvnw -B verify`: bez różnic. Start lokalny w profilu `dev`: health 200, POST /mcp bez JWT 401.
