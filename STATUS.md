@@ -1,6 +1,6 @@
 # STATUS - mcp-server-opensearch (ws-04)
 
-M3: osiągnięty (2026-10-28) - serwer na starterze 3.0.0-beta-2 (kontrakty 3.1.0): `@ToolTitle`, zamknięte schematy, `policy.*` i `manifest.*`, `GET /mcp-manifest` zgodny z `tools/list`; `@ResourceRef` + `OpenSearchIndexResolver` dla `OpenSearch::Index` (`name`, `tags` z konfiguracji); zakres z `QueryScope` (`opensearchIndexExpression()`, `nothingToQuery()` -> odmowa, `OPENSEARCH_SEARCH_PARAMETERS`); zapytania tylko z ustrukturyzowanych filtrów (`text`, `level`, `service`); `ResultFilter` na trafieniach `search_logs`; `aggregate_logs` odmawia dla aliasów i liczy tylko indeksy dopuszczone polityką; 107 testów, 0 błędów.
+M3: osiągnięty (2026-10-28) - serwer na starterze 3.0.0-beta-3 (kontrakty 3.1.0): `@ToolTitle`, zamknięte schematy, `policy.*` i `manifest.*`, `GET /mcp-manifest` zgodny z `tools/list`; `@ResourceRef` + `OpenSearchIndexResolver` dla `OpenSearch::Index` (`name`, `tags` z konfiguracji); zakres z `QueryScope` (`opensearchIndexExpression()`, `nothingToQuery()` -> odmowa, `OPENSEARCH_SEARCH_PARAMETERS`); zapytania tylko z ustrukturyzowanych filtrów (`text`, `level`, `service`); `ResultFilter` na trafieniach `search_logs`; `aggregate_logs` odmawia dla aliasów i liczy tylko indeksy dopuszczone polityką; 107 testów, 0 błędów.
 
 ## M3: kamienie pośrednie
 
@@ -10,8 +10,14 @@ M3: osiągnięty (2026-10-28) - serwer na starterze 3.0.0-beta-2 (kontrakty 3.1.
 | M3.2 | `QueryScope` jako źródło zakresu, `@ResourceRef` i resolver, `ResultFilter`, odmowa przy pustym zakresie | zrobione |
 | M3.3 | filtry zamiast `simple_query_string`, `aggregate_logs`, manifest, testy i dokumentacja | zrobione |
 
-Zakres M3 poza listą wyżej: starter beta-3 nie istnieje w momencie zamknięcia (tagi startera kończą się na `v3.0.0-beta-2`);
-przejście na niego to podbicie `mcp-platform.version` i pozycje z "Z beta-2 na beta-3".
+## Starter 3.0.0-beta-3 (2026-10-28)
+
+Podbicie BOM (MIGRATION "Z beta-2 na beta-3"). Punkt 1 (`@ResultWithoutResources`): bez zmian, żadne narzędzie nie zwraca `String`
+ani listy napisów, tylko rekordy. Punkt 2: brak ręcznych `ToolCallback`. Punkt 6: `QueryScope.requireNoAliases(json)` nie jest
+wołane, bo `OpenSearchService.aggregateLogs` ma równoważną i nie słabszą kontrolę na sparsowanej odpowiedzi `_resolve/index`: odmawia
+przy aliasie (`invalid_argument`) i przy data streamie, a alias prowadzący poza zakres jest najpierw `not_found_or_denied`
+(`requireInsideScope`), czego `access_denied` ze startera nie rozróżnia. `aggregate_logs` czeka na decyzję człowieka (może wypaść do M4);
+nie rozbudowywane.
 
 ## Migracja na starter 3.0.0-beta-2 (2026-10-28)
 
