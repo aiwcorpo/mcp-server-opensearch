@@ -1,6 +1,6 @@
 # STATUS - mcp-server-opensearch (ws-04)
 
-M4: osiągnięty (2026-10-29) - serwer na starterze 3.0.0-beta-7 (kontrakty 4.1.0, potem beta-8): `accepted-credential-types: [token-exchange]` (adapter przyjmuje tylko `token-exchange` + `Bearer`, token używany w jednym żądaniu, bez cache), CC-160 (do OpenSearch idzie tylko `GET _resolve/index` z wyrażeniem zakresu, wyszukiwanie i agregacje na liście nazw z `opensearchSearchTarget`, bez aliasów i strumieni, `get_document` przez `resolveIndexArgument`; `index_prefix` (dawniej `index_pattern`) to prefiks `OpenSearchIndexPrefix` bez obejścia; `requireNoAliases` usunięte), `aggregate_logs` działa na konkretnych indeksach i nie liczy aliasów, stały tekst `not_found_or_denied`, manifest jako artefakt budowy `mcp-app/target/mcp-manifest.json`, README z licznikiem `mcp_audit_authentication_suppressed_total`; wybór indeksów po dacie w nazwie względem `from`-`to`; 114 testów (mcp-application 17, mcp-integration 18, mcp-tools 3, mcp-app 82), 0 błędów.
+M4: osiągnięty (2026-10-29) - serwer na starterze 3.0.0-beta-8 (kontrakty 4.1.0): `accepted-credential-types: [token-exchange]` (adapter przyjmuje tylko `token-exchange` + `Bearer`, token używany w jednym żądaniu, bez cache), CC-160 (do OpenSearch idzie tylko `GET _resolve/index` z wyrażeniem zakresu, wyszukiwanie i agregacje na liście nazw z `opensearchSearchTarget`, bez aliasów i strumieni, `get_document` przez `resolveIndexArgument`; `index_prefix` (dawniej `index_pattern`) to prefiks `OpenSearchIndexPrefix` bez obejścia; `requireNoAliases` usunięte), `aggregate_logs` działa na konkretnych indeksach i nie liczy aliasów, stały tekst `not_found_or_denied`, manifest jako artefakt budowy `mcp-app/target/mcp-manifest.json`, README z licznikiem `mcp_audit_authentication_suppressed_total`; wybór indeksów po dacie w nazwie względem `from`-`to`; 124 testów (mcp-application 18, mcp-integration 18, mcp-tools 3, mcp-app 85 + 7 w wykonaniu `manifest-artifact`), 0 błędów.
 
 ## M4: kamienie pośrednie
 
@@ -14,9 +14,10 @@ M4: osiągnięty (2026-10-29) - serwer na starterze 3.0.0-beta-7 (kontrakty 4.1.
 
 - Argument `index_pattern` zmienił nazwę na `index_prefix` (decyzja koordynatora) i jest prefiksem (`p` obejmuje `p` i `p-...`); `p*` i każdy wieloznacznik to `invalid_argument` ze schematu. Zmienia `definitionHash`.
 - `search_logs` i `aggregate_logs` przy pustym zakresie, prefiksie bez indeksu i poza zakresem zwracają ten sam pusty wynik; `get_document` zostaje przy `not_found_or_denied`.
-- Limit 100 nazw zostaje (decyzja człowieka). Przed nim lista z resolve jest zawężana datą w nazwie względem `from`-`to` (konwencja `p-YYYY.MM.DD` i `p-YYYY.MM`, UTC; indeksy bez daty zawsze w zestawie; filtr nigdy nie poszerza zakresu). Nadal >100 -> `invalid_argument` "narrow the date range". `from` i `to` są w obu narzędziach obowiązkowe, więc domyślne okno nie było potrzebne.
+- Limit 100 nazw zostaje (decyzja człowieka), uzupełniony limitem 3500 znaków ścieżki. Przed nim lista z resolve jest zawężana datą w nazwie względem `from`-`to` (konwencja `p-YYYY.MM.DD` i `p-YYYY.MM`, UTC; indeksy bez daty zawsze w zestawie; filtr nigdy nie poszerza zakresu). Nadal >100 -> `invalid_argument` "narrow the date range". `from` i `to` są w obu narzędziach obowiązkowe, więc domyślne okno nie było potrzebne.
+- Po przeglądzie (L1-L5): typ poświadczenia ustalony na stałe i pilnowany przez `CredentialTypeGuard`; margines doby wokół zakresu (data w nazwie jako UTC); limit ścieżki 3500 znaków obok 100 nazw; manifest powstaje także przy `-DskipTests` (wykonanie `manifest-artifact`).
 - Starter beta-8 (parametry resolve z `ignore_unavailable`/`allow_no_indices`); zachowanie na żywym klastrze nadal do potwierdzenia przez ws-01/ws-10.
-- Reguła wyłączająca `aggregate_logs` w paczce polityk zostaje do sygnału koordynatora.
+- `aggregate_logs` jest gotowe do włączenia po wdrożeniu obrazu i potwierdzeniu `_resolve/index` na żywym klastrze (przegląd Opus: bezpieczne). Reguła wyłączająca w paczce polityk zostaje do sygnału koordynatora.
 
 ## Propozycje CC
 

@@ -35,8 +35,14 @@ import pl.aiwcorpo.mcp.opensearch.core.port.out.ScopedIndices;
  */
 public class OpenSearchService implements OpenSearchUseCase {
 
-    /** Indices one request may name; the request path carries them all. */
+    /** Indices one request may name. */
     static final int MAX_INDICES = 100;
+    /**
+     * Length of the names in the request path, as sent: the commas between them are percent-encoded (three characters
+     * each). OpenSearch refuses an initial line over 4096 bytes, and the method, the options and the HTTP version
+     * need the rest.
+     */
+    static final int MAX_PATH_CHARS = 3500;
 
     private final OpenSearchPort openSearch;
     private final IndexScopeProvider scopes;
@@ -110,7 +116,8 @@ public class OpenSearchService implements OpenSearchUseCase {
                 .filter(name -> IndexDates.meets(name, from, to))
                 .filter(readable)
                 .toList();
-        if (targets.size() > MAX_INDICES) {
+        int pathChars = targets.stream().mapToInt(String::length).sum() + 3 * Math.max(0, targets.size() - 1);
+        if (targets.size() > MAX_INDICES || pathChars > MAX_PATH_CHARS) {
             throw new TooManyIndicesException();
         }
         return targets;

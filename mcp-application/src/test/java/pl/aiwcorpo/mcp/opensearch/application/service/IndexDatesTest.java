@@ -13,16 +13,21 @@ class IndexDatesTest {
     @Test
     void aDailyIndexMeetsTheRangeThatTouchesItsDay() {
         assertThat(IndexDates.meets("p-2026.10.27", FROM, TO)).isTrue();
-        assertThat(IndexDates.meets("p-2026.10.26", FROM, TO)).isFalse();
-        assertThat(IndexDates.meets("p-2026.10.28", FROM, TO)).as("the end is exclusive").isFalse();
-        assertThat(IndexDates.meets("p-2026.10.26", Instant.parse("2026-10-26T23:59:59Z"), TO)).isTrue();
+        assertThat(IndexDates.meets("p-2026.10.26", FROM, TO)).as("one day of margin before the range").isTrue();
+        assertThat(IndexDates.meets("p-2026.10.28", FROM, TO)).as("and after it").isTrue();
+        assertThat(IndexDates.meets("p-2026.10.25", FROM, TO)).isFalse();
+        assertThat(IndexDates.meets("p-2026.10.29", FROM, TO)).isFalse();
+        assertThat(IndexDates.meets("p-2026.10.25", Instant.parse("2026-10-26T23:59:59Z"), TO)).isTrue();
     }
 
     @Test
     void aMonthlyIndexCoversTheWholeMonth() {
         assertThat(IndexDates.meets("p-2026.10", FROM, TO)).isTrue();
-        assertThat(IndexDates.meets("p-2026.09", FROM, TO)).isFalse();
-        assertThat(IndexDates.meets("p-2026.11", FROM, TO)).isFalse();
+        assertThat(IndexDates.meets("p-2026.08", FROM, TO)).isFalse();
+        assertThat(IndexDates.meets("p-2026.12", FROM, TO)).isFalse();
+        assertThat(IndexDates.meets("p-2026.09", FROM, TO)).as("a month that ended more than a day before the range").isFalse();
+        assertThat(IndexDates.meets("p-2026.11", Instant.parse("2026-10-31T00:00:00Z"), Instant.parse("2026-10-31T23:00:00Z")))
+                .as("the next month begins within the margin").isTrue();
         assertThat(IndexDates.meets("p-2026.09", Instant.parse("2026-09-30T23:00:00Z"), TO)).isTrue();
         assertThat(IndexDates.meets("p-2025.12", Instant.parse("2025-12-31T23:00:00Z"), Instant.parse("2026-01-01T01:00:00Z"))).isTrue();
     }

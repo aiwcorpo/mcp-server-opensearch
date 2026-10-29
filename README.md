@@ -95,9 +95,11 @@ się w zakresie. Kolejne kroki `search_logs`:
    dodatkowo odrzuca indeksy z atrybutem `hidden` (nazwa dokładna może do takiego dojść) i spoza
    `MCP_OPENSEARCH_INDEX_PREFIXES`. Pusta lista to "nie pytaj": pusty wynik.
 4. Prefiks z argumentu zostawia nazwy `p` i `p-...`; zakres czasu `from`-`to` zostawia indeksy, których data w nazwie
-   (`p-YYYY.MM.DD` dzień, `p-YYYY.MM` miesiąc, UTC) zachodzi na ten zakres, a indeksy bez daty (albo z datą, która nie
-   istnieje) zostają zawsze; filtr daty tylko odejmuje z listy zakresu. Polityka (`ResourcePolicy.allows`, np. tag `restricted`) usuwa
-   kolejne. Po tych filtrach więcej niż 100 nazw to `invalid_argument` ("narrow the date range"; nazwy idą w ścieżce żądania).
+   (`p-YYYY.MM.DD` dzień, `p-YYYY.MM` miesiąc) zachodzi na ten zakres poszerzony o dobę z każdej strony, a indeksy bez daty (albo z datą, która nie
+   istnieje) zostają zawsze. Data w nazwie jest czytana jako UTC; margines doby pokrywa klaster, który rotuje indeksy w innej
+   strefie; filtr daty tylko odejmuje z listy zakresu. Polityka (`ResourcePolicy.allows`, np. tag `restricted`) usuwa
+   kolejne. Po tych filtrach więcej niż 100 nazw albo więcej niż 3500 znaków ścieżki (nazwy plus przecinki jako `%2C`, żeby
+   zmieścić się w 4096 bajtach linii żądania OpenSearch) to `invalid_argument` ("narrow the date range").
 5. `POST <nazwa1,nazwa2,...>/_search` z ciałem zbudowanym przez serwer: `multi_match` (operator `and`) po polach z
    konfiguracji, opcjonalne `term` poziomu i usługi, zakres czasu, filtr `_index` do prefiksów, `_source.includes` z
    konfiguracji, `track_total_hits: false`.
@@ -107,7 +109,7 @@ się w zakresie. Kolejne kroki `search_logs`:
 data stream, indeks spoza zakresu i nieznany to `not_found_or_denied`; dokument jest czytany z konkretnego indeksu.
 
 Serwer nie używa `_msearch`, `_mget`, skryptów, `_count`, `_alias` ani `_search?q=`. Jedyna agregacja to `terms` w
-`aggregate_logs`. Limit 100 nazw wynika z długości ścieżki; przy dobowych indeksach zakres czasu (do `MCP_OPENSEARCH_MAX_RANGE`, 7 dni) zwykle go nie przekracza.
+`aggregate_logs`. Limity 100 nazw i 3500 znaków wynikają z długości ścieżki; przy dobowych indeksach zakres czasu (do `MCP_OPENSEARCH_MAX_RANGE`, 7 dni) zwykle go nie przekracza.
 
 ### Treść z OpenSearch to dane
 
@@ -160,7 +162,10 @@ odpowiedzi systemu do żadnego komunikatu ani logu.
 - Manifest do rejestracji w gateway'u powstaje w buildzie: testy uruchamiają serwer z
   `aiwcorpo.mcp.platform.manifest.output-file=target/mcp-manifest.json`, więc `./mvnw verify` zostawia
   `mcp-app/target/mcp-manifest.json` z przeglądanego commitu. CI rejestruje ten plik certyfikatem
-  `mcp-registry-ci-mcp-opensearch`, nigdy odpowiedzi działającego serwera. `acceptedTypes` to `["token-exchange"]`.
+  `mcp-registry-ci-mcp-opensearch`, nigdy odpowiedzi działającego serwera. `acceptedTypes` to `["token-exchange"]`, ustalone na stałe w `application.yml`; `CredentialTypeGuard` nie pozwala wystartować z inną wartością (także ustawioną ze środowiska).
+  Plik powstaje także przy `./mvnw clean package -DskipTests`: osobne wykonanie surefire `manifest-artifact` uruchamia `ManifestTest`
+  z `skipTests=false` ustawionym w POM, więc CI bierze `mcp-app/target/mcp-manifest.json` z dowolnego buildu poza
+  `-Dmaven.test.skip=true` (ten nie kompiluje testów i nie jest wspierany).
 - Stos dev uruchamia ten sam obraz z `SPRING_PROFILES_ACTIVE=devstack` i dwiema zgodami (`MCP_DEVSTACK_ACKNOWLEDGED`
   w środowisku procesu oraz `AIWCORPO_MCP_PLATFORM_DEVSTACK_ACKNOWLEDGED`), a przy kluczach `dev-` także
   `AIWCORPO_MCP_PLATFORM_INTERNAL_JWT_ALLOW_TEST_KEYS` i `AIWCORPO_MCP_PLATFORM_POLICY_ALLOW_TEST_KEYS`. Manifest ma
@@ -192,7 +197,7 @@ lokalne, niżej) wyłącza TLS i daje ułatwienia, które starter odrzuca poza `
 | `MCP_OPENSEARCH_QUERY_FIELDS` | pola, w których szukany jest `text` | `message` |
 | `MCP_OPENSEARCH_LEVEL_FIELD`, `MCP_OPENSEARCH_SERVICE_FIELD`, `MCP_OPENSEARCH_HOST_FIELD` | pola keyword filtrów `level`, `service` i grupowania | `log.level`, `service.name`, `host.name` |
 | `MCP_POLICY_URL`, `MCP_POLICY_KEY_ID`, `MCP_POLICY_PUBLIC_KEY_FILE`, `MCP_POLICY_STATE_DIR` | podpisana paczka polityk (Ed25519), katalog stanu z ostatnią rewizją | wymagane poza `dev` |
-| `MCP_INTERNAL_URL`, `MCP_ACCEPTED_CREDENTIAL_TYPES` | opis serwera w manifeście (`GET /mcp-manifest`) | wymagane / `token-exchange` (pierwszy typ to domyślny; nie mieszać z `service-account`) |
+| `MCP_INTERNAL_URL` | opis serwera w manifeście (`GET /mcp-manifest`) | wymagane |
 | `MCP_OPENSEARCH_RESULT_FIELDS` | jedyne pola `_source` w wyniku (bez wieloznaczników) | `@timestamp,message,log.level,service.name,host.name` |
 | `MCP_OPENSEARCH_MAX_RANGE` | najdłuższy zakres `to - from` | `7d` |
 | `MCP_REDIS_HOST`, `MCP_REDIS_PORT`, `MCP_REDIS_USER`, `MCP_REDIS_PASSWORD` | Redis dla jednorazowego `jti` (użytkownik ACL `mcp-opensearch`, klucze `jti:mcp-opensearch:*`) | `localhost`, `6379`, `mcp-opensearch`, puste |
@@ -285,7 +290,7 @@ hosta (`mcp-gateway/scripts/run-dev-host.sh`, JWKS na `localhost:18445`) skonfig
 | `QueryScopeIndicesTest` | nazwy z odpowiedzi resolve, w której są tylko indeksy `p-2026.xx` (brak indeksu `p`); alias, strumień, indeks ukryty, sąsiad i nazwa spoza `OpenSearchIndexName` pominięte; argument tylko z listy nazw; pusty zakres bez zapytania; brak cache |
 | `QueryScopeIndexScopeProviderTest` | granty `p` -> `p,p-*`, `payments-old` poza zakresem; pusty zakres; przecięcie z linkiem i z konfiguracją |
 | `ProductionConfigurationTest`, `DevProfileLoopbackTest` | mTLS `need` poza `dev`; `https` poza `dev` (wyjątek: jawne `allow-plain-http`); adres bez userinfo, query i fragmentu; `dev` tylko na pętli zwrotnej |
-| `IndexDatesTest` | granice dat w nazwach (dzień, miesiąc, koniec wyłączny, przełom roku), nazwy bez daty i z datą nieistniejącą zawsze w zestawie |
+| `IndexDatesTest` | granice dat w nazwach (dzień, miesiąc, margines doby, przełom roku), nazwy bez daty i z datą nieistniejącą zawsze w zestawie |
 | `OpenSearchServiceTest` | prefiks wybiera `p` i `p-...` z listy nazw (nie sąsiada), polityka usuwa indeksy z zapytania i z liczników, pusta lista to pusty wynik bez wywołania, limit 100 nazw, trafienia i dokumenty spoza zakresu odrzucane, jedno rozwiązanie na trafienia jednego wyszukiwania (bez Springa) |
 
 `StubBackend` odpowiada kształtami REST API OpenSearch 2.x (`_resolve/index`, `_search`, `_doc`), łącznie z

@@ -62,7 +62,7 @@ class SearchLogsToolTest extends ServerTestSupport {
                     .as("hits of indices outside the prefixes are dropped").doesNotContain("secret-hr-1", "salary", "logs-team-ab-1", "neighbour");
         }
         assertThat(searchPaths()).as("names, one by one: no pattern, no alias, no restricted index, no neighbour")
-                .containsExactly("/logs-team-a-2026.10.27/_search");
+                .containsExactly("/logs-team-a-2026.10.26,logs-team-a-2026.10.27/_search");
         StubBackend.Request resolve = BACKEND.requests().get(0);
         assertThat(resolve.method()).isEqualTo("GET");
         assertThat(resolve.decodedPath()).as("the only pattern is the scope of the caller").isEqualTo("/_resolve/index/" + SCOPE_EXPRESSION);
@@ -98,6 +98,20 @@ class SearchLogsToolTest extends ServerTestSupport {
     }
 
     @Test
+    void aRangeFarFromTheDatesInTheNamesQueriesNothing() {
+        Map<String, Object> later = args("logs-team-a");
+        later.put("from", "2026-10-29T08:00:00Z");
+        later.put("to", "2026-10-29T10:00:00Z");
+        try (McpSyncClient client = clientWithCredential(PAT)) {
+            McpSchema.CallToolResult result = call(client, "search_logs", later);
+
+            assertThat(result.isError()).as(text(result)).isFalse();
+            assertThat(text(result)).contains("\"hits\":[]");
+        }
+        assertThat(searchPaths()).isEmpty();
+    }
+
+    @Test
     void aFullIndexNameIsAPrefixOfItselfAndSearchesThatIndexAlone() {
         try (McpSyncClient client = clientWithCredential(PAT)) {
             assertThat(call(client, "search_logs", args("logs-team-a-2026.10.27")).isError()).isFalse();
@@ -112,7 +126,7 @@ class SearchLogsToolTest extends ServerTestSupport {
             assertThat(call(client, "search_logs", args("logs-team")).isError()).isFalse();
         }
         assertThat(searchPaths()).as("team b, the neighbour and secret-hr-1 are not in the request")
-                .containsOnly("/logs-team-a-2026.10.27/_search");
+                .containsOnly("/logs-team-a-2026.10.26,logs-team-a-2026.10.27/_search");
     }
 
     @Test
@@ -196,7 +210,7 @@ class SearchLogsToolTest extends ServerTestSupport {
             assertThat(text(byAliasName)).contains("\"hits\":[]");
         }
         assertThat(searchPaths()).as("the alias that points at team b appears in no request")
-                .containsExactly("/logs-team-a-2026.10.27/_search");
+                .containsExactly("/logs-team-a-2026.10.26,logs-team-a-2026.10.27/_search");
     }
 
     @Test

@@ -49,7 +49,7 @@ class AggregateLogsToolTest extends ServerTestSupport {
         }
         StubBackend.Request search = searchRequest();
         assertThat(search.decodedPath()).as("the restricted index and every alias are not in the request").isEqualTo(
-                "/logs-team-a-2026.10.27/_search");
+                "/logs-team-a-2026.10.26,logs-team-a-2026.10.27/_search");
         assertThat(search.query()).contains("expand_wildcards=open", "ignore_unavailable=true", "allow_no_indices=true");
         assertThat(search.body()).contains("\"size\":0", "\"aggs\":{\"groups\":{\"terms\":", "\"field\":\"log.level\"", "\"size\":10",
                         "\"multi_match\":{\"query\":\"payment failed\"", "\"case_insensitive\":true",

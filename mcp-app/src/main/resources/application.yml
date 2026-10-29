@@ -45,7 +45,8 @@ aiwcorpo:
         internal-url: ${MCP_INTERNAL_URL:}
         # The first type is the default of the system (context.credentialType in Cedar): the broker exchanges the user's
         # token for one OpenSearch accepts (Bearer). A request whose X-MCP-Credential-Type is outside the list is refused.
-        accepted-credential-types: ${MCP_ACCEPTED_CREDENTIAL_TYPES:token-exchange}
+        # Fixed on purpose: CredentialTypeGuard refuses to start with any other value (e.g. one set from the environment).
+        accepted-credential-types: token-exchange
 
 opensearch:
   backend:

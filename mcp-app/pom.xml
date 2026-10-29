@@ -35,6 +35,24 @@
         <finalName>mcp-opensearch</finalName>
         <plugins>
             <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <executions>
+                    <!-- The manifest the CI registers is written by this test (manifest.output-file). skipTests is set in the POM,
+                         which wins over -DskipTests, so a build that skips the other tests still produces target/mcp-manifest.json. -->
+                    <execution>
+                        <id>manifest-artifact</id>
+                        <phase>test</phase>
+                        <goals><goal>test</goal></goals>
+                        <configuration>
+                            <skipTests>false</skipTests>
+                            <skip>false</skip>
+                            <test>ManifestTest</test>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
             </plugin>

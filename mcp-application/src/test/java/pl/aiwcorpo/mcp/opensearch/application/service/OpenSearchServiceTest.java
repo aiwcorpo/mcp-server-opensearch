@@ -157,7 +157,7 @@ class OpenSearchServiceTest {
         service.searchLogs(query("logs-team-a"), index -> true);
         service.aggregateLogs(aggregate("logs-team-a"), index -> true);
 
-        List<String> expected = List.of("logs-team-a", "logs-team-a-2026.10.27", "logs-team-a-2026.10", "logs-team-a-app");
+        List<String> expected = List.of("logs-team-a", "logs-team-a-2026.10.26", "logs-team-a-2026.10.27", "logs-team-a-2026.10", "logs-team-a-app");
         assertThat(searched).containsExactly(expected);
         assertThat(aggregated).containsExactly(expected);
     }
@@ -180,9 +180,21 @@ class OpenSearchServiceTest {
         service.searchLogs(query("logs-team-a"), index -> true);
         assertThat(searched).containsExactly(List.of("logs-team-a-2026.10.27"));
 
+        searched.clear();
         List<String> undated = IntStream.rangeClosed(1, OpenSearchService.MAX_INDICES + 1).mapToObj(i -> "logs-team-a-app" + i).toList();
         names = undated;
         assertThatThrownBy(() -> service.searchLogs(query("logs-team-a"), index -> true)).isInstanceOf(TooManyIndicesException.class);
+    }
+
+    @Test
+    void theLengthOfThePathIsLimitedNotOnlyTheCount() {
+        names = IntStream.rangeClosed(1, 40).mapToObj(i -> "logs-team-a-" + "x".repeat(100) + i).toList();
+
+        assertThatThrownBy(() -> service.searchLogs(query("logs-team-a"), index -> true)).isInstanceOf(TooManyIndicesException.class);
+        assertThatThrownBy(() -> service.aggregateLogs(aggregate("logs-team-a"), index -> true)).isInstanceOf(TooManyIndicesException.class);
+        names = IntStream.rangeClosed(1, 20).mapToObj(i -> "logs-team-a-" + "x".repeat(100) + i).toList();
+        service.searchLogs(query("logs-team-a"), index -> true);
+        assertThat(searched).hasSize(1);
     }
 
     @Test

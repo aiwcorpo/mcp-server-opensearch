@@ -105,4 +105,29 @@ class ProductionConfigurationTest {
     private static OpenSearchSearchProperties searchDefaults() {
         return new OpenSearchSearchProperties(null, null, null, null, null, null, null);
     }
+
+    @Test
+    void onlyTokenExchangeIsAcceptedAsTheCredentialType() {
+        MockEnvironment ok = new MockEnvironment().withProperty(
+                "aiwcorpo.mcp.platform.manifest.accepted-credential-types", "token-exchange");
+        assertThatCode(() -> new pl.aiwcorpo.mcp.opensearch.app.config.CredentialTypeGuard(ok).afterPropertiesSet())
+                .doesNotThrowAnyException();
+        for (String other : new String[] {"user-secret", "service-account", "token-exchange,user-secret", "user-secret,token-exchange", ""}) {
+            MockEnvironment environment = new MockEnvironment().withProperty(
+                    "aiwcorpo.mcp.platform.manifest.accepted-credential-types", other);
+            assertThatThrownBy(() -> new pl.aiwcorpo.mcp.opensearch.app.config.CredentialTypeGuard(environment).afterPropertiesSet())
+                    .as(other).isInstanceOf(IllegalStateException.class);
+        }
+        assertThatThrownBy(() -> new pl.aiwcorpo.mcp.opensearch.app.config.CredentialTypeGuard(new MockEnvironment()).afterPropertiesSet())
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void theShippedConfigurationFixesTheTypeWithoutAnEnvironmentVariable() throws IOException {
+        for (String file : new String[] {"application.yml", "application-dev.yml"}) {
+            List<PropertySource<?>> documents = new YamlPropertySourceLoader().load(file, new ClassPathResource(file));
+            assertThat(documents).anySatisfy(document -> assertThat(String.valueOf(
+                    document.getProperty("aiwcorpo.mcp.platform.manifest.accepted-credential-types"))).isEqualTo("token-exchange"));
+        }
+    }
 }
