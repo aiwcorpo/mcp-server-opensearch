@@ -1,5 +1,6 @@
 package pl.aiwcorpo.mcp.opensearch.application.service;
 
+import java.time.Instant;
 import java.util.Collection;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -49,7 +50,7 @@ public class OpenSearchService implements OpenSearchUseCase {
 
     @Override
     public List<LogHit> searchLogs(LogQuery query, Predicate<String> readable) {
-        List<String> targets = targets(query.prefix(), readable);
+        List<String> targets = targets(query.prefix(), query.from(), query.to(), readable);
         if (targets.isEmpty()) {
             return List.of();
         }
@@ -61,7 +62,7 @@ public class OpenSearchService implements OpenSearchUseCase {
 
     @Override
     public List<LogBucket> aggregateLogs(AggregateQuery query, Predicate<String> readable) {
-        List<String> targets = targets(query.prefix(), readable);
+        List<String> targets = targets(query.prefix(), query.from(), query.to(), readable);
         if (targets.isEmpty()) {
             return List.of();
         }
@@ -99,12 +100,14 @@ public class OpenSearchService implements OpenSearchUseCase {
     }
 
     /**
-     * The scope's indices under the prefix, minus what the policy refuses. Empty means "do not ask": a request with
-     * no index in its path would search every index.
+     * The scope's indices under the prefix whose date (see {@link IndexDates}) meets the time range of the call, minus
+     * what the policy refuses. The date only removes names from the list the scope allows; it never adds one. Empty
+     * means "do not ask": a request with no index in its path would search every index.
      */
-    private List<String> targets(String prefix, Predicate<String> readable) {
+    private List<String> targets(String prefix, Instant from, Instant to, Predicate<String> readable) {
         List<String> targets = indices.names().stream()
                 .filter(name -> name.equals(prefix) || name.startsWith(prefix + "-"))
+                .filter(name -> IndexDates.meets(name, from, to))
                 .filter(readable)
                 .toList();
         if (targets.size() > MAX_INDICES) {

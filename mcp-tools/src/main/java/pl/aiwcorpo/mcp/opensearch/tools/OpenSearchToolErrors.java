@@ -21,7 +21,7 @@ public class OpenSearchToolErrors implements ToolErrorMapping {
         }
         if (ex instanceof TooManyIndicesException) {
             return Optional.of(new SafeError(ToolErrorCode.INVALID_ARGUMENT.code(),
-                    "The index prefix covers too many indices for one request; use a longer prefix."));
+                    "The index prefix covers too many indices for one request; narrow the date range (from and to)."));
         }
         return Optional.empty();
     }

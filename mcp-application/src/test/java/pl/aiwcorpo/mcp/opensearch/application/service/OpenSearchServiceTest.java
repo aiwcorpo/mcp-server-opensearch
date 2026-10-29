@@ -150,6 +150,42 @@ class OpenSearchServiceTest {
     }
 
     @Test
+    void onlyIndicesOfTheTimeRangeAndUndatedOnesAreQueried() {
+        names = List.of("logs-team-a", "logs-team-a-2026.10.26", "logs-team-a-2026.10.27", "logs-team-a-2026.09", "logs-team-a-2026.10",
+                "logs-team-a-app");
+
+        service.searchLogs(query("logs-team-a"), index -> true);
+        service.aggregateLogs(aggregate("logs-team-a"), index -> true);
+
+        List<String> expected = List.of("logs-team-a", "logs-team-a-2026.10.27", "logs-team-a-2026.10", "logs-team-a-app");
+        assertThat(searched).containsExactly(expected);
+        assertThat(aggregated).containsExactly(expected);
+    }
+
+    @Test
+    void theDateNeverAddsAnIndexTheScopeDidNotList() {
+        names = List.of("logs-team-a-2026.10.27");
+
+        service.searchLogs(query("logs-team-a"), index -> true);
+
+        assertThat(searched).containsExactly(List.of("logs-team-a-2026.10.27"));
+    }
+
+    @Test
+    void theLimitCountsOnlyWhatMeetsTheRange() {
+        List<String> outOfRange = IntStream.rangeClosed(1, 200).mapToObj(i -> "logs-team-a-2025.%02d.%02d".formatted((i % 12) + 1, (i % 28) + 1)).distinct().toList();
+        names = new ArrayList<>(outOfRange);
+        names.add("logs-team-a-2026.10.27");
+
+        service.searchLogs(query("logs-team-a"), index -> true);
+        assertThat(searched).containsExactly(List.of("logs-team-a-2026.10.27"));
+
+        List<String> undated = IntStream.rangeClosed(1, OpenSearchService.MAX_INDICES + 1).mapToObj(i -> "logs-team-a-app" + i).toList();
+        names = undated;
+        assertThatThrownBy(() -> service.searchLogs(query("logs-team-a"), index -> true)).isInstanceOf(TooManyIndicesException.class);
+    }
+
+    @Test
     void theHitsOfOneSearchAreJudgedFromOneResolution() {
         assertThat(service.resolveIndices(List.of("logs-team-a-1", "logs-team-a-1", "secret-hr-1", "logs-team-a-all")))
                 .containsExactly("logs-team-a-1");

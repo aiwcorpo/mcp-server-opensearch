@@ -29,7 +29,7 @@ class ResourcePolicyTest extends ServerTestSupport {
 
     private static Map<String, Object> search(String pattern) {
         Map<String, Object> args = new HashMap<>();
-        args.put("index_pattern", pattern);
+        args.put("index_prefix", pattern);
         args.put("text", "payment");
         args.put("from", "2026-10-27T08:00:00Z");
         args.put("to", "2026-10-27T10:00:00Z");

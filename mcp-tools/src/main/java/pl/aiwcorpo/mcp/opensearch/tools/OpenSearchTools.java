@@ -36,7 +36,7 @@ import tools.jackson.databind.json.JsonMapper;
 
 /**
  * The MCP tools of this server. Every argument is untrusted input from a model. Parameter names are the public
- * argument names of the input schema, hence {@code index_pattern}; the limits in {@link ArgumentLimits} are
+ * argument names of the input schema, hence {@code index_prefix}; the limits in {@link ArgumentLimits} are
  * published in the schema by {@code SchemaLimitedToolCallbacks} and enforced by the starter before the method
  * runs, and the checks below repeat what the tool relies on.
  *
@@ -110,7 +110,7 @@ public class OpenSearchTools {
     @ToolTitle("Szukaj w logach")
     public SearchLogsResult searchLogs(
             @ToolParam(description = "Index prefix p: covers the index named p and every index named p-..., no wildcard")
-            @ArgumentLimits(contractPattern = "OpenSearchIndexPrefix", minLength = 1, maxLength = 255) String index_pattern,
+            @ArgumentLimits(contractPattern = "OpenSearchIndexPrefix", minLength = 1, maxLength = 255) String index_prefix,
             @ToolParam(description = "Words that must all occur in the log message; characters such as + - | * \" are plain text")
             @ArgumentLimits(minLength = 1, maxLength = MAX_QUERY) String text,
             @ToolParam(description = "Log level, upper case: TRACE, DEBUG, INFO, WARN, ERROR or FATAL", required = false)
@@ -123,7 +123,7 @@ public class OpenSearchTools {
             @ArgumentLimits(minLength = 20, maxLength = MAX_TIME) String to,
             @ToolParam(description = "Number of entries, 1-100, default 20", required = false)
             @ArgumentLimits(minimum = 1, maximum = MAX_SIZE) Integer size) {
-        String prefix = validPrefix(index_pattern);
+        String prefix = validPrefix(index_prefix);
         LogFilter filter = new LogFilter(validText(text), validLevel(level), validService(service));
         Instant start = validTime("from", from);
         Instant end = validTime("to", to);
@@ -147,7 +147,7 @@ public class OpenSearchTools {
     @ToolTitle("Zlicz logi według pola")
     public AggregateLogsResult aggregateLogs(
             @ToolParam(description = "Index prefix p: covers the index named p and every index named p-..., no wildcard")
-            @ArgumentLimits(contractPattern = "OpenSearchIndexPrefix", minLength = 1, maxLength = 255) String index_pattern,
+            @ArgumentLimits(contractPattern = "OpenSearchIndexPrefix", minLength = 1, maxLength = 255) String index_prefix,
             @ToolParam(description = "What to group by: level, service or host")
             @ArgumentLimits(minLength = 4, maxLength = 7, pattern = GROUP_BY_REGEX) String group_by,
             @ToolParam(description = "Words that must all occur in the log message", required = false)
@@ -162,7 +162,7 @@ public class OpenSearchTools {
             @ArgumentLimits(minLength = 20, maxLength = MAX_TIME) String to,
             @ToolParam(description = "Number of groups, 1-50, default 10", required = false)
             @ArgumentLimits(minimum = 1, maximum = MAX_BUCKETS) Integer size) {
-        String prefix = validPrefix(index_pattern);
+        String prefix = validPrefix(index_prefix);
         GroupBy groupBy = validGroupBy(group_by);
         LogFilter filter = new LogFilter(text == null ? null : validText(text), validLevel(level), validService(service));
         Instant start = validTime("from", from);
@@ -203,7 +203,7 @@ public class OpenSearchTools {
 
     static String validPrefix(String value) {
         if (value == null || !INDEX_PREFIX.matcher(value).matches()) {
-            throw new InvalidToolArgumentException("index_pattern must be one index prefix: lower-case letters, digits,"
+            throw new InvalidToolArgumentException("index_prefix must be one index prefix: lower-case letters, digits,"
                     + " '.', '_' or '-', starting with a letter or digit; wildcards, lists, ':', '<', date math and"
                     + " '_all' are not accepted");
         }

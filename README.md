@@ -1,6 +1,6 @@
 # mcp-opensearch: serwer MCP platformy
 
-Serwer MCP dla systemu `opensearch`, zbudowany na `mcp-platform-starter` 3.0.0-beta-7 (Java 25, Spring Boot
+Serwer MCP dla systemu `opensearch`, zbudowany na `mcp-platform-starter` 3.0.0-beta-8 (Java 25, Spring Boot
 4.1.0, Spring AI 2.0.0, kontrakty `mcp-contracts` 4.1.0). Stoi wyłącznie za gateway'em platformy: przyjmuje
 ruch tylko po mTLS z wewnętrznym JWT gateway'a (C2), a do systemu docelowego woła z poświadczeniem
 użytkownika, które gateway dołącza do każdego żądania (C3). Bez poprawnego JWT odpowiada 401, nie ma trybu
@@ -38,8 +38,8 @@ całość. Resolver zasobów (`@ResourceRef`, starter beta) dojdzie w `mcp-integ
 
 | Narzędzie (tytuł) | Ryzyko | Akcja | Uprawnienie (C9) | Poświadczenie | Argumenty | Wynik |
 | --- | --- | --- | --- | --- | --- | --- |
-| `search_logs` ("Szukaj w logach") | `READ_ONLY` | `read` | grupa `mcp-opensearch-read` i co najmniej jeden zakres `mcp-opensearch-idx-<prefiks>` | `token-exchange`, `Authorization: Bearer` (token od brokera, używany tylko w jednym żądaniu, bez cache) | `index_pattern` (prefiks `p` z kontraktu `OpenSearchIndexPrefix`, bez wieloznaczników: obejmuje indeks `p` i `p-...` w zakresie grantów), `text` (1-512 znaków, słowa; operatory to zwykły tekst), opcjonalnie `level` (`TRACE`...`FATAL`) i `service` (nazwa), `from`, `to` (ISO-8601 z przesunięciem, `to > from`, zakres <= `MCP_OPENSEARCH_MAX_RANGE`), `size` (1-100, domyślnie 20) | `{indexPattern, from, to, hits: [{index, id, timestamp, data, truncated}], truncated}`; `index` to `@ResourceRef`; `data` to wpisy `{name, path, value}`, `path` i `value` jako `UntrustedText`; bez liczników |
-| `aggregate_logs` ("Zlicz logi według pola") | `READ_ONLY` | `read` | jak wyżej | jak wyżej | `index_pattern`, `group_by` (`level`, `service`, `host`), opcjonalnie `text`, `level`, `service`, `from`, `to`, `size` (1-50, domyślnie 10) | `{indexPattern, from, to, groupBy, buckets: [{key, count}]}`; `key` jako `UntrustedText` |
+| `search_logs` ("Szukaj w logach") | `READ_ONLY` | `read` | grupa `mcp-opensearch-read` i co najmniej jeden zakres `mcp-opensearch-idx-<prefiks>` | `token-exchange`, `Authorization: Bearer` (token od brokera, używany tylko w jednym żądaniu, bez cache) | `index_prefix` (prefiks `p` z kontraktu `OpenSearchIndexPrefix`, bez wieloznaczników: obejmuje indeks `p` i `p-...` w zakresie grantów), `text` (1-512 znaków, słowa; operatory to zwykły tekst), opcjonalnie `level` (`TRACE`...`FATAL`) i `service` (nazwa), `from`, `to` (ISO-8601 z przesunięciem, `to > from`, zakres <= `MCP_OPENSEARCH_MAX_RANGE`), `size` (1-100, domyślnie 20) | `{indexPrefix, from, to, hits: [{index, id, timestamp, data, truncated}], truncated}`; `index` to `@ResourceRef`; `data` to wpisy `{name, path, value}`, `path` i `value` jako `UntrustedText`; bez liczników |
+| `aggregate_logs` ("Zlicz logi według pola") | `READ_ONLY` | `read` | jak wyżej | jak wyżej | `index_prefix`, `group_by` (`level`, `service`, `host`), opcjonalnie `text`, `level`, `service`, `from`, `to`, `size` (1-50, domyślnie 10) | `{indexPrefix, from, to, groupBy, buckets: [{key, count}]}`; `key` jako `UntrustedText` |
 | `get_document` ("Pobierz dokument z logów") | `READ_ONLY` | `read` | jak wyżej | jak wyżej | `index` (`@ResourceRef` typu `OpenSearch::Index`; jeden konkretny indeks, nie alias ani data stream, `^[a-z0-9][a-z0-9._-]{0,254}$`), `id` (`^[A-Za-z0-9_-][A-Za-z0-9_.:@+=-]{0,255}$`) | `{index, id, data, truncated}`; `data` jak w `search_logs` |
 
 Nazwy widziane przez klienta: `opensearch__search_logs`, `opensearch__aggregate_logs`, `opensearch__get_document`
@@ -86,6 +86,7 @@ się w zakresie. Kolejne kroki `search_logs`:
 
 1. Argument sprawdza starter względem `inputSchema` (wzorzec `OpenSearchIndexPrefix` z kontraktów, bez `*`, przecinka,
    `:`, `<`, wiodącej kropki, `_all`; `invalid_argument` bez nazwy i wartości), potem narzędzie.
+   Argument nazywa się `index_prefix`.
 2. Zakres wywołania wynika z grantów (wyżej); pusty zakres kończy wywołanie pustym wynikiem.
 3. `GET _resolve/index/<wyrażenie zakresu>?expand_wildcards=open` (`QueryScope.OPENSEARCH_RESOLVE_PARAMETERS`);
    odpowiedź 404 to pusta odpowiedź (`QueryScope.EMPTY_RESOLVE_RESPONSE`). Odpowiedzi nie ma w żadnym cache: każde
@@ -93,8 +94,10 @@ się w zakresie. Kolejne kroki `search_logs`:
    zostawia indeksy w zakresie, bez aliasów i strumieni danych i o nazwach zgodnych z `OpenSearchIndexName`; serwer
    dodatkowo odrzuca indeksy z atrybutem `hidden` (nazwa dokładna może do takiego dojść) i spoza
    `MCP_OPENSEARCH_INDEX_PREFIXES`. Pusta lista to "nie pytaj": pusty wynik.
-4. Prefiks z argumentu zostawia nazwy `p` i `p-...`, polityka (`ResourcePolicy.allows`, np. tag `restricted`) usuwa
-   kolejne. Więcej niż 100 nazw to `invalid_argument` (nazwy idą w ścieżce żądania).
+4. Prefiks z argumentu zostawia nazwy `p` i `p-...`; zakres czasu `from`-`to` zostawia indeksy, których data w nazwie
+   (`p-YYYY.MM.DD` dzień, `p-YYYY.MM` miesiąc, UTC) zachodzi na ten zakres, a indeksy bez daty (albo z datą, która nie
+   istnieje) zostają zawsze; filtr daty tylko odejmuje z listy zakresu. Polityka (`ResourcePolicy.allows`, np. tag `restricted`) usuwa
+   kolejne. Po tych filtrach więcej niż 100 nazw to `invalid_argument` ("narrow the date range"; nazwy idą w ścieżce żądania).
 5. `POST <nazwa1,nazwa2,...>/_search` z ciałem zbudowanym przez serwer: `multi_match` (operator `and`) po polach z
    konfiguracji, opcjonalne `term` poziomu i usługi, zakres czasu, filtr `_index` do prefiksów, `_source.includes` z
    konfiguracji, `track_total_hits: false`.
@@ -104,8 +107,7 @@ się w zakresie. Kolejne kroki `search_logs`:
 data stream, indeks spoza zakresu i nieznany to `not_found_or_denied`; dokument jest czytany z konkretnego indeksu.
 
 Serwer nie używa `_msearch`, `_mget`, skryptów, `_count`, `_alias` ani `_search?q=`. Jedyna agregacja to `terms` w
-`aggregate_logs`. Znane ograniczenie: nazwy w ścieżce, więc prefiks obejmujący ponad 100 indeksów (np. dobowe indeksy
-z całego roku) trzeba zawęzić; zwiększenie limitu wymaga decyzji o długości żądania.
+`aggregate_logs`. Limit 100 nazw wynika z długości ścieżki; przy dobowych indeksach zakres czasu (do `MCP_OPENSEARCH_MAX_RANGE`, 7 dni) zwykle go nie przekracza.
 
 ### Treść z OpenSearch to dane
 
@@ -283,6 +285,7 @@ hosta (`mcp-gateway/scripts/run-dev-host.sh`, JWKS na `localhost:18445`) skonfig
 | `QueryScopeIndicesTest` | nazwy z odpowiedzi resolve, w której są tylko indeksy `p-2026.xx` (brak indeksu `p`); alias, strumień, indeks ukryty, sąsiad i nazwa spoza `OpenSearchIndexName` pominięte; argument tylko z listy nazw; pusty zakres bez zapytania; brak cache |
 | `QueryScopeIndexScopeProviderTest` | granty `p` -> `p,p-*`, `payments-old` poza zakresem; pusty zakres; przecięcie z linkiem i z konfiguracją |
 | `ProductionConfigurationTest`, `DevProfileLoopbackTest` | mTLS `need` poza `dev`; `https` poza `dev` (wyjątek: jawne `allow-plain-http`); adres bez userinfo, query i fragmentu; `dev` tylko na pętli zwrotnej |
+| `IndexDatesTest` | granice dat w nazwach (dzień, miesiąc, koniec wyłączny, przełom roku), nazwy bez daty i z datą nieistniejącą zawsze w zestawie |
 | `OpenSearchServiceTest` | prefiks wybiera `p` i `p-...` z listy nazw (nie sąsiada), polityka usuwa indeksy z zapytania i z liczników, pusta lista to pusty wynik bez wywołania, limit 100 nazw, trafienia i dokumenty spoza zakresu odrzucane, jedno rozwiązanie na trafienia jednego wyszukiwania (bez Springa) |
 
 `StubBackend` odpowiada kształtami REST API OpenSearch 2.x (`_resolve/index`, `_search`, `_doc`), łącznie z

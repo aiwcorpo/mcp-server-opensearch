@@ -8,15 +8,15 @@ pochodzi z definicji `OpenSearchIndexName` kontraktów.
 
 | Narzędzie (klient widzi `opensearch__<nazwa>`) | Ryzyko | Akcja (C6) | Argumenty | Zasób (C7) | Uprawnienie (C9) | Poświadczenie |
 | --- | --- | --- | --- | --- | --- | --- |
-| `search_logs` ("Szukaj w logach") | `READ_ONLY` | `read` | `index_pattern` (prefiks, wzorzec `OpenSearchIndexPrefix` z kontraktów, 1-255, bez wieloznaczników), `text` (1-512, bez znaków sterujących), `level` (opcjonalnie, `^(?:TRACE\|DEBUG\|INFO\|WARN\|ERROR\|FATAL)$`), `service` (opcjonalnie, do 64 znaków), `from`, `to` (ISO-8601 z przesunięciem, 20-40 znaków), `size` (1-100, domyślnie 20) | `OpenSearch::Index` w wyniku (`hits[].index`, `@ResourceRef`); zakres z `QueryScope` | `mcp-opensearch-read` + `mcp-opensearch-idx-<prefiks>` | `token-exchange`, `Authorization: Bearer` |
-| `aggregate_logs` ("Zlicz logi według pola") | `READ_ONLY` | `read` | `index_pattern`, `group_by` (`level`, `service`, `host`), opcjonalnie `text`, `level`, `service`, `from`, `to`, `size` (1-50, domyślnie 10) | konkretne indeksy z `scope.opensearchSearchTarget` obejmowane prefiksem i ocenione polityką (`ResourcePolicy.allows`); aliasy i strumienie nie są liczone | jak wyżej | jak wyżej |
+| `search_logs` ("Szukaj w logach") | `READ_ONLY` | `read` | `index_prefix` (prefiks, wzorzec `OpenSearchIndexPrefix` z kontraktów, 1-255, bez wieloznaczników), `text` (1-512, bez znaków sterujących), `level` (opcjonalnie, `^(?:TRACE\|DEBUG\|INFO\|WARN\|ERROR\|FATAL)$`), `service` (opcjonalnie, do 64 znaków), `from`, `to` (ISO-8601 z przesunięciem, 20-40 znaków; zawężają też indeksy po dacie w nazwie), `size` (1-100, domyślnie 20) | `OpenSearch::Index` w wyniku (`hits[].index`, `@ResourceRef`); zakres z `QueryScope` | `mcp-opensearch-read` + `mcp-opensearch-idx-<prefiks>` | `token-exchange`, `Authorization: Bearer` |
+| `aggregate_logs` ("Zlicz logi według pola") | `READ_ONLY` | `read` | `index_prefix`, `group_by` (`level`, `service`, `host`), opcjonalnie `text`, `level`, `service`, `from`, `to`, `size` (1-50, domyślnie 10) | konkretne indeksy z `scope.opensearchSearchTarget` obejmowane prefiksem i ocenione polityką (`ResourcePolicy.allows`); aliasy i strumienie nie są liczone | jak wyżej | jak wyżej |
 | `get_document` ("Pobierz dokument z logów") | `READ_ONLY` | `read` | `index` (`^[a-z0-9][a-z0-9._-]{0,254}$`), `id` (`^[A-Za-z0-9_-][A-Za-z0-9_.:@+=-]{0,255}$`) | `OpenSearch::Index` (`index`, `@ResourceRef`) | jak wyżej | jak wyżej |
 
 Błędy (C10):
 
 | Sytuacja | Kod |
 | --- | --- |
-| zły argument (naruszenie schematu sprawdza starter, resztę narzędzie): prefiks z `,` `:` `<` `-` `_all` `*` `.`, nadmiarowy argument, prefiks obejmujący ponad 100 indeksów | `invalid_argument` (bez nazwy i wartości argumentu) |
+| zły argument (naruszenie schematu sprawdza starter, resztę narzędzie): prefiks z `,` `:` `<` `-` `_all` `*` `.`, nadmiarowy argument, ponad 100 indeksów po filtrze daty | `invalid_argument` (bez nazwy i wartości argumentu) |
 | `get_document`: brak grantów (`QueryScope.nothingToQuery()`), indeks lub dokument nie istnieje, nazwa poza grantami, linkiem albo prefiksami serwera, indeks z tagiem `restricted`, 403 OpenSearch, alias, data stream, indeks ukryty | `not_found_or_denied` (ten sam tekst) |
 | brak grupy `mcp-opensearch-read` | `access_denied` |
 | brak poświadczenia, 401 OpenSearch, schemat inny niż `Bearer` | `credential_required` |
@@ -27,4 +27,4 @@ Błędy (C10):
 
 Konwencje: nazwy `snake_case`, czasownik i obiekt, bez prefiksu systemu (dokłada go gateway); opis mówi, co
 narzędzie zwraca, bez instrukcji dla modelu. Nazwy argumentów `search_logs` są z briefu ws-04
-(`index_pattern`), dlatego parametr metody Java też nazywa się `index_pattern`.
+(`index_prefix`), dlatego parametr metody Java też nazywa się `index_prefix`.

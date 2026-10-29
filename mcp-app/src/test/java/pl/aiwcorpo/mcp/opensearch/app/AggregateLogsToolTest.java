@@ -24,7 +24,7 @@ class AggregateLogsToolTest extends ServerTestSupport {
 
     private static Map<String, Object> args(String pattern) {
         Map<String, Object> args = new HashMap<>();
-        args.put("index_pattern", pattern);
+        args.put("index_prefix", pattern);
         args.put("group_by", "level");
         args.put("from", "2026-10-27T08:00:00Z");
         args.put("to", "2026-10-27T10:00:00Z");
@@ -49,7 +49,7 @@ class AggregateLogsToolTest extends ServerTestSupport {
         }
         StubBackend.Request search = searchRequest();
         assertThat(search.decodedPath()).as("the restricted index and every alias are not in the request").isEqualTo(
-                "/logs-team-a-2026.10.26,logs-team-a-2026.10.27/_search");
+                "/logs-team-a-2026.10.27/_search");
         assertThat(search.query()).contains("expand_wildcards=open", "ignore_unavailable=true", "allow_no_indices=true");
         assertThat(search.body()).contains("\"size\":0", "\"aggs\":{\"groups\":{\"terms\":", "\"field\":\"log.level\"", "\"size\":10",
                         "\"multi_match\":{\"query\":\"payment failed\"", "\"case_insensitive\":true",
@@ -100,7 +100,7 @@ class AggregateLogsToolTest extends ServerTestSupport {
         try (McpSyncClient client = clientWithCredential(PAT)) {
             for (Map.Entry<String, Object> bad : List.<Map.Entry<String, Object>>of(Map.entry("group_by", "_index"),
                     Map.entry("group_by", "message"), Map.entry("group_by", "level,service"), Map.entry("size", 51),
-                    Map.entry("size", 0), Map.entry("level", "error"), Map.entry("index_pattern", "*"), Map.entry("index_pattern", "logs-team-a-*"))) {
+                    Map.entry("size", 0), Map.entry("level", "error"), Map.entry("index_prefix", "*"), Map.entry("index_prefix", "logs-team-a-*"))) {
                 Map<String, Object> arguments = args("logs-team-a");
                 arguments.put(bad.getKey(), bad.getValue());
 
@@ -123,8 +123,8 @@ class AggregateLogsToolTest extends ServerTestSupport {
             assertThat(tool.title()).isNotBlank();
             assertThat(tool.inputSchema()).containsEntry("additionalProperties", false);
             assertThat(tool.inputSchema()).extractingByKey("required").asInstanceOf(InstanceOfAssertFactories.LIST)
-                    .containsExactlyInAnyOrder("index_pattern", "group_by", "from", "to");
-            assertThat(properties(tool.inputSchema()).keySet()).containsExactlyInAnyOrder("index_pattern", "group_by",
+                    .containsExactlyInAnyOrder("index_prefix", "group_by", "from", "to");
+            assertThat(properties(tool.inputSchema()).keySet()).containsExactlyInAnyOrder("index_prefix", "group_by",
                     "text", "level", "service", "from", "to", "size");
         }
     }

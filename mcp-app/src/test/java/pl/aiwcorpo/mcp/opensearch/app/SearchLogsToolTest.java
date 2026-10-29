@@ -30,7 +30,7 @@ class SearchLogsToolTest extends ServerTestSupport {
 
     private static Map<String, Object> args(String pattern) {
         Map<String, Object> args = new HashMap<>();
-        args.put("index_pattern", pattern);
+        args.put("index_prefix", pattern);
         args.put("text", "payment failed");
         args.put("from", "2026-10-27T08:00:00Z");
         args.put("to", "2026-10-27T10:00:00+00:00");
@@ -62,11 +62,11 @@ class SearchLogsToolTest extends ServerTestSupport {
                     .as("hits of indices outside the prefixes are dropped").doesNotContain("secret-hr-1", "salary", "logs-team-ab-1", "neighbour");
         }
         assertThat(searchPaths()).as("names, one by one: no pattern, no alias, no restricted index, no neighbour")
-                .containsExactly("/logs-team-a-2026.10.26,logs-team-a-2026.10.27/_search");
+                .containsExactly("/logs-team-a-2026.10.27/_search");
         StubBackend.Request resolve = BACKEND.requests().get(0);
         assertThat(resolve.method()).isEqualTo("GET");
         assertThat(resolve.decodedPath()).as("the only pattern is the scope of the caller").isEqualTo("/_resolve/index/" + SCOPE_EXPRESSION);
-        assertThat(resolve.query()).isEqualTo("expand_wildcards=open");
+        assertThat(resolve.query()).isEqualTo("allow_no_indices=true&expand_wildcards=open&ignore_unavailable=true");
         assertThat(BACKEND.requests().stream().filter(r -> r.method().equals("GET")).map(StubBackend.Request::decodedPath))
                 .as("the resolution is repeated for the hits, never reused").containsOnly("/_resolve/index/" + SCOPE_EXPRESSION);
         StubBackend.Request search = BACKEND.requests().stream().filter(r -> r.path().endsWith("/_search")).findFirst().orElseThrow();
@@ -84,6 +84,20 @@ class SearchLogsToolTest extends ServerTestSupport {
     }
 
     @Test
+    void theTimeRangeSelectsIndicesByTheDateInTheirNames() {
+        Map<String, Object> wide = args("logs-team-a");
+        wide.put("from", "2026-10-26T12:00:00Z");
+        Map<String, Object> hostile = args("logs-team-a");
+        hostile.put("from", "9999-12-31T23:59:59Z");
+        hostile.put("to", "+999999999-12-31T23:59:59Z");
+        try (McpSyncClient client = clientWithCredential(PAT)) {
+            assertThat(call(client, "search_logs", wide).isError()).isFalse();
+            assertInvalidArgument(call(client, "search_logs", hostile));
+        }
+        assertThat(searchPaths()).containsExactly("/logs-team-a-2026.10.26,logs-team-a-2026.10.27/_search");
+    }
+
+    @Test
     void aFullIndexNameIsAPrefixOfItselfAndSearchesThatIndexAlone() {
         try (McpSyncClient client = clientWithCredential(PAT)) {
             assertThat(call(client, "search_logs", args("logs-team-a-2026.10.27")).isError()).isFalse();
@@ -98,7 +112,7 @@ class SearchLogsToolTest extends ServerTestSupport {
             assertThat(call(client, "search_logs", args("logs-team")).isError()).isFalse();
         }
         assertThat(searchPaths()).as("team b, the neighbour and secret-hr-1 are not in the request")
-                .containsOnly("/logs-team-a-2026.10.26,logs-team-a-2026.10.27/_search");
+                .containsOnly("/logs-team-a-2026.10.27/_search");
     }
 
     @Test
@@ -112,10 +126,10 @@ class SearchLogsToolTest extends ServerTestSupport {
             Map<String, Object> schema = tool.inputSchema();
             assertThat(schema).containsEntry("additionalProperties", false);
             assertThat(schema).extractingByKey("required").asInstanceOf(InstanceOfAssertFactories.LIST)
-                    .containsExactlyInAnyOrder("index_pattern", "text", "from", "to");
+                    .containsExactlyInAnyOrder("index_prefix", "text", "from", "to");
             Map<String, Object> properties = properties(schema);
-            assertThat(properties.keySet()).containsExactlyInAnyOrder("index_pattern", "text", "level", "service", "from", "to", "size");
-            assertThat(properties.get("index_pattern")).asInstanceOf(InstanceOfAssertFactories.MAP)
+            assertThat(properties.keySet()).containsExactlyInAnyOrder("index_prefix", "text", "level", "service", "from", "to", "size");
+            assertThat(properties.get("index_prefix")).asInstanceOf(InstanceOfAssertFactories.MAP)
                     .containsEntry("maxLength", 255).as("the pattern comes from the contracts, not from a copy in the server")
                     .containsEntry("pattern", "^(?:[a-z0-9][a-z0-9._-]{0,253}[a-z0-9_]|[a-z0-9])$");
             assertThat(properties.get("text")).asInstanceOf(InstanceOfAssertFactories.MAP).containsEntry("maxLength", 512);
@@ -182,7 +196,7 @@ class SearchLogsToolTest extends ServerTestSupport {
             assertThat(text(byAliasName)).contains("\"hits\":[]");
         }
         assertThat(searchPaths()).as("the alias that points at team b appears in no request")
-                .containsExactly("/logs-team-a-2026.10.26,logs-team-a-2026.10.27/_search");
+                .containsExactly("/logs-team-a-2026.10.27/_search");
     }
 
     @Test
@@ -240,7 +254,7 @@ class SearchLogsToolTest extends ServerTestSupport {
     }
 
     @Test
-    void indexPatternsBeyondOnePlainPrefixAreRejectedBeforeOpenSearch() {
+    void indexPrefixsBeyondOnePlainPrefixAreRejectedBeforeOpenSearch() {
         try (McpSyncClient client = clientWithCredential(PAT)) {
             for (String pattern : new String[] {"*", "_all", "-logs-team-a-*", ".security", ".ds-logs-team-a-stream-000001", ".",
                     "logs-team-a-*", "logs-team-a*", "logs-team-a-*,secret-*", "logs-team-a,logs-team-b", ",", "logs-team-a,", ",logs-team-a",
