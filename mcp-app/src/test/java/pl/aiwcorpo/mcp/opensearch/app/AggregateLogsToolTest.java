@@ -11,7 +11,7 @@ import org.assertj.core.api.InstanceOfAssertFactories;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-/** {@code aggregate_logs}: counts only over concrete indices the caller may read, never over an alias. */
+/** {@code aggregate_logs}: counts only over concrete indices the caller may read, never over an alias or a pattern. */
 class AggregateLogsToolTest extends ServerTestSupport {
 
     private static final String PAT = "Bearer opensearch-token-of-jkowalski-5c1e";
@@ -37,7 +37,7 @@ class AggregateLogsToolTest extends ServerTestSupport {
 
     @Test
     void countsTheReadableIndicesOnlyAndMarksTheGroupsAsUntrusted() {
-        Map<String, Object> arguments = args("logs-team-a-*");
+        Map<String, Object> arguments = args("logs-team-a");
         arguments.put("level", "ERROR");
         arguments.put("text", "payment failed");
         try (McpSyncClient client = clientWithCredential(PAT)) {
@@ -48,7 +48,7 @@ class AggregateLogsToolTest extends ServerTestSupport {
                     "\"text\":\"WARN <script>\"", "\"kind\":\"untrusted-data\"");
         }
         StubBackend.Request search = searchRequest();
-        assertThat(search.decodedPath()).as("the restricted index is not in the request").isEqualTo(
+        assertThat(search.decodedPath()).as("the restricted index and every alias are not in the request").isEqualTo(
                 "/logs-team-a-2026.10.26,logs-team-a-2026.10.27/_search");
         assertThat(search.query()).contains("expand_wildcards=open", "ignore_unavailable=true", "allow_no_indices=true");
         assertThat(search.body()).contains("\"size\":0", "\"aggs\":{\"groups\":{\"terms\":", "\"field\":\"log.level\"", "\"size\":10",
@@ -58,26 +58,41 @@ class AggregateLogsToolTest extends ServerTestSupport {
     }
 
     @Test
-    void anAliasInThePatternIsRefused() {
-        try (McpSyncClient client = clientWithCredential(PAT)) {
-            for (String pattern : new String[] {"logs-team-b-filtered", "logs-team-b-routed-*", "logs-team-b-all"}) {
-                McpSchema.CallToolResult result = call(client, "aggregate_logs", args(pattern));
+    void aliasesAreNotCountedWhateverTheyAreNamedOrPointAt() {
+        try (McpSyncClient client = clientInGroups(PAT, READ_GROUP, GRANT_TEAM_B)) {
+            for (String prefix : new String[] {"logs-team-b-filtered", "logs-team-b-routed-index", "logs-team-b-all", "logs-team-b-leak",
+                    "logs-team-b-two", "logs-team-b-stream"}) {
+                McpSchema.CallToolResult result = call(client, "aggregate_logs", args(prefix));
 
-                assertThat(text(result)).as(pattern).contains("\"error\":\"invalid_argument\"", "alias");
+                assertThat(result.isError()).as(prefix + ": " + text(result)).isFalse();
+                assertThat(text(result)).as(prefix).contains("\"buckets\":[]");
+            }
+            assertThat(call(client, "aggregate_logs", args("logs-team-b")).isError()).isFalse();
+        }
+        assertThat(BACKEND.requests()).filteredOn(r -> r.path().endsWith("/_search"))
+                .extracting(StubBackend.Request::decodedPath).containsExactly("/logs-team-b-1/_search");
+    }
+
+    @Test
+    void aPrefixOutsideTheScopeOrRestrictedCountsNothingAndAsksNothing() {
+        try (McpSyncClient client = clientWithCredential(PAT)) {
+            String missing = text(call(client, "aggregate_logs", args("logs-team-a-missing"))).replace("logs-team-a-missing", "PREFIX");
+            assertThat(missing).contains("\"buckets\":[]");
+            for (String prefix : new String[] {"logs-team-a-hr", "logs-team-a-hr-1", "secret-hr-1", "logs-team-ab"}) {
+                assertThat(text(call(client, "aggregate_logs", args(prefix))).replace(prefix, "PREFIX")).as(prefix).isEqualTo(missing);
             }
         }
         assertThat(BACKEND.requests()).noneMatch(r -> r.path().endsWith("/_search"));
     }
 
     @Test
-    void anAliasLeadingOutsideTheScopeIsNotFoundAndNotNamedAsAnAlias() {
+    void wildcardsAndListsAreRejectedBeforeOpenSearch() {
         try (McpSyncClient client = clientWithCredential(PAT)) {
-            String missing = text(call(client, "aggregate_logs", args("logs-team-a-missing")));
-            assertThat(missing).contains(NOT_FOUND_OR_DENIED);
-            assertThat(text(call(client, "aggregate_logs", args("logs-team-b-leak")))).isEqualTo(missing);
-            assertThat(text(call(client, "aggregate_logs", args("logs-team-a-hr-1")))).as("restricted").isEqualTo(missing);
+            for (String pattern : new String[] {"*", "_all", "logs-team-a-*", "logs-team-a*", "logs-team-a,logs-team-b", ".security", "-x"}) {
+                assertInvalidArgument(call(client, "aggregate_logs", args(pattern)));
+            }
         }
-        assertThat(BACKEND.requests()).noneMatch(r -> r.path().endsWith("/_search"));
+        assertThat(BACKEND.requests()).isEmpty();
     }
 
     @Test
@@ -85,13 +100,13 @@ class AggregateLogsToolTest extends ServerTestSupport {
         try (McpSyncClient client = clientWithCredential(PAT)) {
             for (Map.Entry<String, Object> bad : List.<Map.Entry<String, Object>>of(Map.entry("group_by", "_index"),
                     Map.entry("group_by", "message"), Map.entry("group_by", "level,service"), Map.entry("size", 51),
-                    Map.entry("size", 0), Map.entry("level", "error"), Map.entry("index_pattern", "*"))) {
-                Map<String, Object> arguments = args("logs-team-a-*");
+                    Map.entry("size", 0), Map.entry("level", "error"), Map.entry("index_pattern", "*"), Map.entry("index_pattern", "logs-team-a-*"))) {
+                Map<String, Object> arguments = args("logs-team-a");
                 arguments.put(bad.getKey(), bad.getValue());
 
                 assertInvalidArgument(call(client, "aggregate_logs", arguments));
             }
-            Map<String, Object> noGroup = args("logs-team-a-*");
+            Map<String, Object> noGroup = args("logs-team-a");
             noGroup.remove("group_by");
             assertInvalidArgument(call(client, "aggregate_logs", noGroup));
         }

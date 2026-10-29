@@ -43,12 +43,12 @@ public class OpenSearchIndexResolver implements ResourceResolver<ResolvedIndex> 
         return useCase.resolveIndex(index);
     }
 
-    /** The hits of one search repeat the same few indices; each distinct name is asked once. */
+    /** The hits of one search repeat the same few indices; one resolution answers for all of them. */
     @Override
     public Map<String, ResolvedIndex> fetchAll(Collection<String> indices) {
         Map<String, ResolvedIndex> fetched = new LinkedHashMap<>();
-        for (String index : new LinkedHashSet<>(indices)) {
-            useCase.resolveIndex(index).ifPresent(resolved -> fetched.put(index, resolved));
+        for (String index : useCase.resolveIndices(new LinkedHashSet<>(indices))) {
+            fetched.put(index, new ResolvedIndex(index));
         }
         return fetched;
     }

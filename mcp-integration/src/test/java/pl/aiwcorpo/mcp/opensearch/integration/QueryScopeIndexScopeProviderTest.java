@@ -7,7 +7,6 @@ import java.util.Optional;
 import java.util.TreeSet;
 import org.junit.jupiter.api.Test;
 import pl.aiwcorpo.mcp.cedar.entities.QueryConstraint;
-import pl.aiwcorpo.mcp.opensearch.core.domain.IndexPattern;
 import pl.aiwcorpo.mcp.opensearch.core.domain.IndexScope;
 import pl.aiwcorpo.mcp.platform.resource.QueryScope;
 
@@ -28,12 +27,10 @@ class QueryScopeIndexScopeProviderTest {
         IndexScope scope = scopeOf(List.of("p"), null, "p", "q");
 
         assertThat(scope.prefixes()).containsExactly("p");
-        assertThat(scope.expressionFor(new IndexPattern("p", true))).hasValue("p,p-*");
         assertThat(scope.covers("p")).isTrue();
         assertThat(scope.covers("p-2026.10")).isTrue();
         assertThat(scope.covers("payments-old")).isFalse();
         assertThat(scope.covers("pp")).isFalse();
-        assertThat(scope.expressionFor(new IndexPattern("pay", true))).isEmpty();
     }
 
     @Test
@@ -49,7 +46,6 @@ class QueryScopeIndexScopeProviderTest {
 
         assertThat(scope.isEmpty()).isTrue();
         assertThat(scope.covers("p")).isFalse();
-        assertThat(scope.expressionFor(new IndexPattern("p", true))).isEmpty();
     }
 
     @Test

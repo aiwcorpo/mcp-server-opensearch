@@ -8,26 +8,21 @@ import pl.aiwcorpo.mcp.opensearch.core.domain.IndexScope;
 import pl.aiwcorpo.mcp.opensearch.core.domain.LogBucket;
 import pl.aiwcorpo.mcp.opensearch.core.domain.LogHit;
 import pl.aiwcorpo.mcp.opensearch.core.domain.LogQuery;
-import pl.aiwcorpo.mcp.opensearch.core.domain.ResolvedIndices;
 
 /** Outbound port to OpenSearch, implemented in mcp-integration. Every call runs with the caller's credential. */
 public interface OpenSearchPort {
 
-    /** Empty when OpenSearch does not show the expression to the caller (403/404). */
-    Optional<ResolvedIndices> resolve(String expression);
+    /**
+     * The body of {@code GET _resolve/index/<expression>} as OpenSearch sent it; the platform library reads it. A 404
+     * (no index of the expression exists) is the library's empty answer. A 403 is a {@code NotFoundOrDeniedException}.
+     */
+    String resolveIndexResponse(String expression);
 
     /**
-     * Whether any index behind the alias carries a filter or a routing for it. A document read by id goes to the
-     * concrete index and would skip them, so such an alias is not read. Not visible to the caller (403/404) is
-     * a {@code NotFoundOrDeniedException}.
+     * Searches the concrete {@code indices}, named one by one (never a pattern); the query also restricts
+     * {@code _index} to {@code scope}.
      */
-    boolean aliasHasFilterOrRouting(String alias);
-
-    /**
-     * Searches the server-built {@code expression}; the query also restricts {@code _index} to {@code scope}, so
-     * an alias created after {@link #resolve} still cannot bring in other indices.
-     */
-    List<LogHit> search(String expression, IndexScope scope, LogQuery query);
+    List<LogHit> search(List<String> indices, IndexScope scope, LogQuery query);
 
     /**
      * Counts the documents of the concrete {@code indices} by the field of the query. The indices are named one by

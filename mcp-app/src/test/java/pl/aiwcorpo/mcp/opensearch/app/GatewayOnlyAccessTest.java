@@ -30,7 +30,7 @@ class GatewayOnlyAccessTest extends ServerTestSupport {
     @Test
     void withoutJwtEveryMcpRequestIs401() throws Exception {
         HttpResponse<String> call = post(GET_RECORD, Map.of("X-MCP-Credential", "Bearer stolen-pat",
-                "X-MCP-Credential-Type", "user-secret"));
+                "X-MCP-Credential-Type", CREDENTIAL_TYPE));
         assertThat(call.statusCode()).isEqualTo(401);
         assertThat(call.headers().firstValue("WWW-Authenticate")).hasValue("Bearer");
         assertThat(call.body()).contains("\"error\":\"unauthenticated\"").doesNotContain("stolen-pat");

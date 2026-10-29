@@ -112,6 +112,17 @@ class ManifestTest extends ServerTestSupport {
     }
 
     @Test
+    void theBuildArtifactIsTheManifestTheServerPublishesAndAcceptsOnlyTokenExchange() throws Exception {
+        JsonNode manifest = manifest();
+        JsonNode artifact = JSON.readTree(java.nio.file.Files.readString(java.nio.file.Path.of(MANIFEST_FILE)));
+
+        assertThat(artifact).isEqualTo(manifest);
+        assertThat(artifact.at("/credential/acceptedTypes")).hasSize(1);
+        assertThat(artifact.at("/credential/acceptedTypes/0").asString()).isEqualTo("token-exchange");
+        assertThat(artifact.has("environment")).as("only the devstack profile publishes environment=dev (CC-138)").isFalse();
+    }
+
+    @Test
     void theManifestNeedsTheInternalJwtAndIsNotATool() throws Exception {
         assertThat(get("/mcp-manifest", Map.of()).statusCode()).isEqualTo(401);
         assertThat(get("/mcp-manifest", GATEWAY.user().tool("get_document").mint().headers()).statusCode()).isEqualTo(401);

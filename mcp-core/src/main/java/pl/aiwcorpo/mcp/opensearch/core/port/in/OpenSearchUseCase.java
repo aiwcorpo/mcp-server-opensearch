@@ -1,7 +1,9 @@
 package pl.aiwcorpo.mcp.opensearch.core.port.in;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.Predicate;
 import pl.aiwcorpo.mcp.opensearch.core.domain.AggregateQuery;
 import pl.aiwcorpo.mcp.opensearch.core.domain.IndexDocument;
@@ -14,31 +16,32 @@ import pl.aiwcorpo.mcp.opensearch.core.domain.ResolvedIndex;
 public interface OpenSearchUseCase {
 
     /**
-     * {@code readable} says whether the policy lets the caller read an index; a name that reaches no readable index
-     * is answered like a missing one, so the result does not tell a restricted index from a nonexistent one.
+     * Searches the concrete indices of the caller's scope that the prefix of the query covers and {@code readable}
+     * accepts (the policy). Nothing to query, a prefix that covers no index the caller may read and an index
+     * OpenSearch does not show all give the same empty list, so the result does not tell a restricted index from
+     * a nonexistent one.
      *
-     * @throws pl.aiwcorpo.mcp.opensearch.core.domain.NotFoundOrDeniedException when the caller may query no index,
-     *         when the pattern reaches an index outside the allowed prefixes (alias, hidden index) or when
-     *         OpenSearch refuses it
-     * @throws pl.aiwcorpo.mcp.opensearch.core.domain.IndexOutsideScopeException when no allowed prefix covers the pattern
+     * @throws pl.aiwcorpo.mcp.opensearch.core.domain.TooManyIndicesException when more indices are readable than one request names
      */
     List<LogHit> searchLogs(LogQuery query, Predicate<String> readable);
 
     /**
-     * Counts by one field over the concrete indices the pattern names and {@code readable} accepts; counts cannot
-     * be corrected after filtering, so what the caller may not read is left out of the query.
+     * Counts by one field over the same indices as {@link #searchLogs}; counts cannot be corrected after filtering,
+     * so what the caller may not read is left out of the query. Aliases are not among the indices, so they add nothing.
      *
-     * @throws pl.aiwcorpo.mcp.opensearch.core.domain.AggregationOverAliasException when the pattern reaches an alias
      * @throws pl.aiwcorpo.mcp.opensearch.core.domain.TooManyIndicesException when more indices are readable than one request names
      */
     List<LogBucket> aggregateLogs(AggregateQuery query, Predicate<String> readable);
 
     /**
-     * The index behind {@code index} when it is one concrete index (or an alias of exactly one) that the caller may
-     * see and the scope covers; empty for everything else: missing, forbidden, hidden, outside the scope, an alias of
-     * several indices or with a filter or routing, a data stream. The cause is deliberately not told apart.
+     * The index named by {@code index} when it is a concrete index the caller may see inside the scope; empty for
+     * everything else: missing, forbidden, hidden, outside the scope, an alias, a data stream. The cause is
+     * deliberately not told apart.
      */
     Optional<ResolvedIndex> resolveIndex(String index);
+
+    /** The subset of {@code indices} that {@link #resolveIndex} accepts, from one resolution instead of one per name. */
+    Set<String> resolveIndices(Collection<String> indices);
 
     /**
      * Reads a document of the index {@code resolveIndex} returned.

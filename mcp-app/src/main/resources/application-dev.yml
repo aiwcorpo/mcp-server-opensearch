@@ -25,7 +25,7 @@ aiwcorpo:
           public-key-file: ${MCP_POLICY_PUBLIC_KEY_FILE:../mcp-policies/keys/dev/test-policies-main-dev.public.pem}
       manifest:
         internal-url: https://mcp-opensearch.internal:8443/mcp
-        accepted-credential-types: user-secret
+        accepted-credential-types: token-exchange
 
 opensearch:
   backend:

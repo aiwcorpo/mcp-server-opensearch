@@ -54,7 +54,7 @@ class ResourcePolicyTest extends ServerTestSupport {
     @Test
     void aSearchDropsTheHitsOfARestrictedIndexAndKeepsTheOthers() {
         try (McpSyncClient client = clientWithCredential(PAT)) {
-            McpSchema.CallToolResult result = call(client, "search_logs", search("logs-team-a-*"));
+            McpSchema.CallToolResult result = call(client, "search_logs", search("logs-team-a"));
 
             assertThat(result.isError()).as(text(result)).isFalse();
             assertThat(text(result)).contains("logs-team-a-2026.10.27").doesNotContain("logs-team-a-hr-1", "payroll");
@@ -62,14 +62,15 @@ class ResourcePolicyTest extends ServerTestSupport {
     }
 
     @Test
-    void searchingARestrictedIndexByExactNameAnswersLikeAMissingOne() {
+    void searchingARestrictedIndexByItsNameAnswersLikeAMissingOne() {
         try (McpSyncClient client = clientWithCredential(PAT)) {
-            String missing = text(call(client, "search_logs", search("logs-team-a-nothing")));
+            String missing = text(call(client, "search_logs", search("logs-team-a-nothing"))).replace("logs-team-a-nothing", "PREFIX");
             McpSchema.CallToolResult restricted = call(client, "search_logs", search("logs-team-a-hr-1"));
 
-            assertThat(restricted.isError()).isTrue();
-            assertThat(text(restricted)).contains(NOT_FOUND_OR_DENIED).isEqualTo(missing);
-            assertThat(text(call(client, "search_logs", search("logs-team-b-stream")))).as("a data stream by name").isEqualTo(missing);
+            assertThat(restricted.isError()).isFalse();
+            assertThat(text(restricted).replace("logs-team-a-hr-1", "PREFIX")).contains("\"hits\":[]").isEqualTo(missing);
+            assertThat(text(call(client, "search_logs", search("logs-team-b-stream"))).replace("logs-team-b-stream", "PREFIX"))
+                    .as("a data stream by name").isEqualTo(missing);
         }
         assertThat(BACKEND.requests()).noneMatch(r -> r.path().endsWith("/_search"));
     }
@@ -78,7 +79,7 @@ class ResourcePolicyTest extends ServerTestSupport {
     void aCallerWithoutTheReadGroupGetsAccessDeniedAndNothingReachesOpenSearch() {
         try (McpSyncClient client = clientInGroups(PAT, GRANT_TEAM_A, GRANT_TEAM_B)) {
             for (String tool : List.of("search_logs", "get_document")) {
-                Map<String, Object> args = tool.equals("search_logs") ? search("logs-team-a-*")
+                Map<String, Object> args = tool.equals("search_logs") ? search("logs-team-a")
                         : Map.of("index", "logs-team-a-2026.10.27", "id", DOC_ID);
                 McpSchema.CallToolResult result = call(client, tool, args);
 
@@ -90,29 +91,29 @@ class ResourcePolicyTest extends ServerTestSupport {
     }
 
     @Test
-    void aCallerWithoutAnyGrantIsRefusedLikeAMissingIndexAndNothingIsQueried() {
+    void aCallerWithoutAnyGrantGetsEmptyResultsAndNothingIsQueried() {
         try (McpSyncClient client = clientInGroups(PAT, READ_GROUP)) {
-            String expected = missing(client);
-            assertThat(expected).contains(NOT_FOUND_OR_DENIED);
-            assertThat(text(call(client, "search_logs", search("logs-team-a-*")))).isEqualTo(expected);
-            assertThat(text(call(client, "search_logs", search("logs-team-a")))).isEqualTo(expected);
-            assertThat(text(call(client, "get_document", Map.of("index", "logs-team-a-2026.10.27", "id", DOC_ID)))).isEqualTo(expected);
-            Map<String, Object> aggregate = new HashMap<>(search("logs-team-a-*"));
+            assertThat(missing(client)).contains(NOT_FOUND_OR_DENIED);
+            assertThat(text(call(client, "get_document", Map.of("index", "logs-team-a-2026.10.27", "id", DOC_ID))))
+                    .isEqualTo(missing(client));
+            McpSchema.CallToolResult search = call(client, "search_logs", search("logs-team-a"));
+            assertThat(search.isError()).as(text(search)).isFalse();
+            assertThat(text(search)).contains("\"hits\":[]");
+            Map<String, Object> aggregate = new HashMap<>(search("logs-team-a"));
             aggregate.remove("text");
             aggregate.put("group_by", "level");
-            assertThat(text(call(client, "aggregate_logs", aggregate))).isEqualTo(expected);
+            McpSchema.CallToolResult counted = call(client, "aggregate_logs", aggregate);
+            assertThat(counted.isError()).as(text(counted)).isFalse();
+            assertThat(text(counted)).contains("\"buckets\":[]");
         }
-        assertThat(BACKEND.requests()).as("an empty scope must not become an index expression that means every index")
-                .noneMatch(r -> r.path().endsWith("/_search"));
-        assertThat(BACKEND.requests()).noneMatch(r -> r.path().startsWith("/_resolve/index/logs-team"));
+        assertThat(BACKEND.requests()).as("an empty scope must not become an index expression that means every index").isEmpty();
     }
 
     @Test
     void theQueryIsLimitedToTheGrantedPrefixes() {
         try (McpSyncClient client = clientInGroups(PAT, READ_GROUP, GRANT_TEAM_A)) {
-            assertThat(call(client, "search_logs", search("logs-team-a-*")).isError()).isFalse();
-            String outside = text(call(client, "search_logs", search("logs-team-b-*")));
-            assertThat(outside).contains(NOT_FOUND_OR_DENIED);
+            assertThat(call(client, "search_logs", search("logs-team-a")).isError()).isFalse();
+            assertThat(text(call(client, "search_logs", search("logs-team-b")))).contains("\"hits\":[]");
         }
         StubBackend.Request search = BACKEND.requests().stream().filter(r -> r.path().endsWith("/_search")).findFirst().orElseThrow();
         assertThat(search.body()).contains("{\"term\":{\"_index\":\"logs-team-a\"}}", "{\"prefix\":{\"_index\":\"logs-team-a-\"}}")
@@ -125,9 +126,9 @@ class ResourcePolicyTest extends ServerTestSupport {
         try (McpSyncClient client = clientAs(user -> {
             reader(user);
             user.virtualServer("team-b-only", Map.of(LINK_KEY, List.of("logs-team-b")));
-        }, PAT, "user-secret")) {
+        }, PAT, CREDENTIAL_TYPE)) {
             String expected = missing(client);
-            assertThat(text(call(client, "search_logs", search("logs-team-a-*")))).isEqualTo(expected);
+            assertThat(text(call(client, "search_logs", search("logs-team-a")))).contains("\"hits\":[]");
             assertThat(text(call(client, "get_document", Map.of("index", "logs-team-a-2026.10.27", "id", DOC_ID)))).isEqualTo(expected);
             assertThat(call(client, "get_document", Map.of("index", "logs-team-b-1", "id", DOC_ID)).isError()).isFalse();
             assertThat(call(client, "search_logs", search("logs-team-b-1")).isError()).isFalse();
@@ -138,8 +139,8 @@ class ResourcePolicyTest extends ServerTestSupport {
         try (McpSyncClient client = clientAs(user -> {
             user.username("jkowalski").groups(List.of(READ_GROUP, GRANT_TEAM_A));
             user.virtualServer("team-b-only", Map.of(LINK_KEY, List.of("logs-team-b")));
-        }, PAT, "user-secret")) {
-            assertThat(text(call(client, "search_logs", search("logs-team-a-*")))).contains(NOT_FOUND_OR_DENIED);
+        }, PAT, CREDENTIAL_TYPE)) {
+            assertThat(text(call(client, "search_logs", search("logs-team-a")))).contains("\"hits\":[]");
         }
         assertThat(BACKEND.requests()).as("the link and the grants do not meet: no query").isEmpty();
     }
@@ -147,11 +148,11 @@ class ResourcePolicyTest extends ServerTestSupport {
     @Test
     void aPrefixNeverReachesItsNeighbour() {
         try (McpSyncClient client = clientInGroups(PAT, READ_GROUP, GRANT_TEAM_A)) {
-            McpSchema.CallToolResult result = call(client, "search_logs", search("logs-team-a*"));
+            McpSchema.CallToolResult result = call(client, "search_logs", search("logs-team-a"));
 
             assertThat(result.isError()).as(text(result)).isFalse();
             assertThat(text(result)).doesNotContain("logs-team-ab-1", "neighbour");
-            assertThat(text(call(client, "search_logs", search("logs-team-ab*")))).contains(NOT_FOUND_OR_DENIED);
+            assertThat(text(call(client, "search_logs", search("logs-team-ab")))).contains("\"hits\":[]");
             assertThat(text(call(client, "get_document", Map.of("index", "logs-team-ab-1", "id", DOC_ID)))).contains(NOT_FOUND_OR_DENIED);
         }
         assertThat(BACKEND.requests().getFirst().decodedPath()).isEqualTo("/_resolve/index/logs-team-a,logs-team-a-*");

@@ -1,7 +1,6 @@
 package pl.aiwcorpo.mcp.opensearch.core.domain;
 
 import java.util.List;
-import java.util.Optional;
 
 /**
  * The index prefixes a call may touch. A prefix {@code p} covers the index named exactly {@code p} and every
@@ -27,23 +26,5 @@ public record IndexScope(List<String> prefixes) {
             return false;
         }
         return prefixes.stream().anyMatch(prefix -> index.equals(prefix) || index.startsWith(prefix + "-"));
-    }
-
-    /**
-     * The index expression the server sends to OpenSearch for a validated pattern, or empty when no prefix
-     * covers it. A wildcard right after a prefix ({@code logs-team-a*}) would also match {@code logs-team-ab},
-     * so it becomes {@code logs-team-a,logs-team-a-*}; the comma is written by the server, never by the model.
-     */
-    public Optional<String> expressionFor(IndexPattern pattern) {
-        String base = pattern.base();
-        for (String prefix : prefixes) {
-            if (base.equals(prefix)) {
-                return Optional.of(pattern.wildcard() ? prefix + "," + prefix + "-*" : prefix);
-            }
-            if (base.startsWith(prefix + "-")) {
-                return Optional.of(pattern.wildcard() ? base + "*" : base);
-            }
-        }
-        return Optional.empty();
     }
 }

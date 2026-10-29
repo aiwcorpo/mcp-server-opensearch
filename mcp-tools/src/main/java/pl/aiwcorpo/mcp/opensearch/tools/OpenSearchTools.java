@@ -16,7 +16,6 @@ import org.springframework.stereotype.Service;
 import pl.aiwcorpo.mcp.opensearch.core.domain.AggregateQuery;
 import pl.aiwcorpo.mcp.opensearch.core.domain.GroupBy;
 import pl.aiwcorpo.mcp.opensearch.core.domain.IndexDocument;
-import pl.aiwcorpo.mcp.opensearch.core.domain.IndexPattern;
 import pl.aiwcorpo.mcp.opensearch.core.domain.LogBucket;
 import pl.aiwcorpo.mcp.opensearch.core.domain.LogFilter;
 import pl.aiwcorpo.mcp.opensearch.core.domain.LogHit;
@@ -41,9 +40,10 @@ import tools.jackson.databind.json.JsonMapper;
  * published in the schema by {@code SchemaLimitedToolCallbacks} and enforced by the starter before the method
  * runs, and the checks below repeat what the tool relies on.
  *
- * <p>Index arguments are checked here for syntax and fail closed on everything OpenSearch would read as more
- * than one plain name: lists, exclusions, date math, remote clusters, {@code _all}, a bare {@code *} and
- * hidden {@code .} indices. Prefix and alias checks follow in {@code OpenSearchService}.
+ * <p>The index argument of the two search tools is an index prefix, never a pattern: the contract pattern
+ * {@code OpenSearchIndexPrefix} lets through one plain name and nothing OpenSearch would read as more (lists,
+ * exclusions, date math, remote clusters, {@code _all}, {@code *}, hidden {@code .} indices). It only picks from
+ * the concrete indices of the caller's scope ({@code OpenSearchService}); it is never put into a request.
  *
  * <p>The model gives values, never a query: text, a level, a service. The server builds the query from them
  * ({@code OpenSearchAdapter}) and limits it to the scope the caller's grants allow. Documents the policy refuses
@@ -57,16 +57,18 @@ public class OpenSearchTools {
     public static final String AGGREGATE_LOGS = "aggregate_logs";
     public static final String GET_DOCUMENT = "get_document";
 
-    /** Pattern of the brief and of the input schema; a leading '-' (exclusion) is rejected separately. */
-    private static final String INDEX_PATTERN_REGEX = "^[a-z0-9-]+\\*?$";
     /** Document ids that fit a URL path segment; the same text goes to the input schema. */
     private static final String DOCUMENT_ID_REGEX = "^[A-Za-z0-9_-][A-Za-z0-9_.:@+=-]{0,255}$";
-    private static final Pattern INDEX_PATTERN = Pattern.compile(INDEX_PATTERN_REGEX);
     /**
      * {@code OpenSearchIndexName} read from the contract on the classpath, the same pattern the input schema
      * publishes. Since contracts 2.1 (CC-074) it excludes a leading dot itself.
      */
     private static final Pattern INDEX_NAME = contractPattern("OpenSearchIndexName");
+    /**
+     * {@code OpenSearchIndexPrefix}: one name without wildcard, comma, colon, date math or leading dot, which cannot
+     * be {@code _all} or a bare {@code *}. The input schema publishes the same pattern.
+     */
+    private static final Pattern INDEX_PREFIX = contractPattern("OpenSearchIndexPrefix");
     /** OpenSearch ids are free text up to 512 bytes; this keeps ids that fit a URL path segment unescaped. */
     private static final Pattern DOCUMENT_ID = Pattern.compile(DOCUMENT_ID_REGEX);
     /** The levels of the log field, upper case; the term query on the level field ignores case, so any mapping works. */
@@ -96,19 +98,19 @@ public class OpenSearchTools {
     }
 
     /**
-     * The index pattern is an argument and not a {@code @ResourceRef}: a pattern ends in {@code *} and is not an index
-     * name, and a caller whose grants or link exclude it must get the same answer as for an index that does not
-     * exist. The scope comes from {@code QueryScope}; what the policy refuses in a hit is removed afterwards.
+     * The prefix is an argument and not a {@code @ResourceRef}: it names a set of indices, not one. A caller whose
+     * grants or link exclude it gets the same empty result as for a prefix with no index. The scope comes from
+     * {@code QueryScope}; what the policy refuses in a hit is removed afterwards.
      */
-    @Tool(name = SEARCH_LOGS, description = "Searches log documents in the indices matching one"
-            + " index pattern within a time range. All words of text must occur in the log message; the optional"
+    @Tool(name = SEARCH_LOGS, description = "Searches log documents in the indices of one"
+            + " index prefix within a time range. All words of text must occur in the log message; the optional"
             + " level and service narrow it to exact values. Returns up to size entries, newest first, each with index,"
             + " id, timestamp and the configured log fields under 'data'. No total count.")
     @ToolRisk(RiskLevel.READ_ONLY)
     @ToolTitle("Szukaj w logach")
     public SearchLogsResult searchLogs(
-            @ToolParam(description = "One index name, or one name followed by '*'. Lower-case letters, digits and '-'")
-            @ArgumentLimits(minLength = 1, maxLength = 255, pattern = INDEX_PATTERN_REGEX) String index_pattern,
+            @ToolParam(description = "Index prefix p: covers the index named p and every index named p-..., no wildcard")
+            @ArgumentLimits(contractPattern = "OpenSearchIndexPrefix", minLength = 1, maxLength = 255) String index_pattern,
             @ToolParam(description = "Words that must all occur in the log message; characters such as + - | * \" are plain text")
             @ArgumentLimits(minLength = 1, maxLength = MAX_QUERY) String text,
             @ToolParam(description = "Log level, upper case: TRACE, DEBUG, INFO, WARN, ERROR or FATAL", required = false)
@@ -121,31 +123,31 @@ public class OpenSearchTools {
             @ArgumentLimits(minLength = 20, maxLength = MAX_TIME) String to,
             @ToolParam(description = "Number of entries, 1-100, default 20", required = false)
             @ArgumentLimits(minimum = 1, maximum = MAX_SIZE) Integer size) {
-        IndexPattern pattern = validPattern(index_pattern);
+        String prefix = validPrefix(index_pattern);
         LogFilter filter = new LogFilter(validText(text), validLevel(level), validService(service));
         Instant start = validTime("from", from);
         Instant end = validTime("to", to);
         validRange(start, end);
         int count = validSize(size);
-        List<LogHit> hits = useCase.searchLogs(new LogQuery(pattern, filter, start, end, count),
+        List<LogHit> hits = useCase.searchLogs(new LogQuery(prefix, filter, start, end, count),
                 index -> policy.allows(indices.resource(index)));
-        return SearchLogsResult.of(pattern.toString(), start.toString(), end.toString(), hits);
+        return SearchLogsResult.of(prefix, start.toString(), end.toString(), hits);
     }
 
     /**
      * Counts per level, service or host. Only indices the policy allows are counted (each one is judged like a
-     * {@code get_document} target), and an alias in the pattern is refused by the use case: a count cannot be
-     * corrected after the fact the way a list of hits can.
+     * {@code get_document} target), and only concrete indices: a count cannot be corrected after the fact the way
+     * a list of hits can, and an alias would bring in indices the prefix does not name.
      */
-    @Tool(name = AGGREGATE_LOGS, description = "Counts log documents in the indices matching one index pattern"
+    @Tool(name = AGGREGATE_LOGS, description = "Counts log documents in the indices of one index prefix"
             + " within a time range, grouped by level, service or host. Returns up to size groups, the biggest first,"
             + " each with the value and its document count. The optional text, level and service narrow the"
-            + " documents as in search_logs. Refuses patterns that reach an alias.")
+            + " documents as in search_logs. Aliases and data streams are not counted.")
     @ToolRisk(RiskLevel.READ_ONLY)
     @ToolTitle("Zlicz logi według pola")
     public AggregateLogsResult aggregateLogs(
-            @ToolParam(description = "One index name, or one name followed by '*'. Lower-case letters, digits and '-'")
-            @ArgumentLimits(minLength = 1, maxLength = 255, pattern = INDEX_PATTERN_REGEX) String index_pattern,
+            @ToolParam(description = "Index prefix p: covers the index named p and every index named p-..., no wildcard")
+            @ArgumentLimits(contractPattern = "OpenSearchIndexPrefix", minLength = 1, maxLength = 255) String index_pattern,
             @ToolParam(description = "What to group by: level, service or host")
             @ArgumentLimits(minLength = 4, maxLength = 7, pattern = GROUP_BY_REGEX) String group_by,
             @ToolParam(description = "Words that must all occur in the log message", required = false)
@@ -160,7 +162,7 @@ public class OpenSearchTools {
             @ArgumentLimits(minLength = 20, maxLength = MAX_TIME) String to,
             @ToolParam(description = "Number of groups, 1-50, default 10", required = false)
             @ArgumentLimits(minimum = 1, maximum = MAX_BUCKETS) Integer size) {
-        IndexPattern pattern = validPattern(index_pattern);
+        String prefix = validPrefix(index_pattern);
         GroupBy groupBy = validGroupBy(group_by);
         LogFilter filter = new LogFilter(text == null ? null : validText(text), validLevel(level), validService(service));
         Instant start = validTime("from", from);
@@ -171,9 +173,9 @@ public class OpenSearchTools {
             throw new InvalidToolArgumentException("size must be between 1 and " + MAX_BUCKETS);
         }
         List<LogBucket> found = useCase.aggregateLogs(
-                new AggregateQuery(pattern, filter, start, end, groupBy, buckets),
+                new AggregateQuery(prefix, filter, start, end, groupBy, buckets),
                 index -> policy.allows(indices.resource(index)));
-        return AggregateLogsResult.of(pattern.toString(), start.toString(), end.toString(), groupBy.name().toLowerCase(java.util.Locale.ROOT), found);
+        return AggregateLogsResult.of(prefix, start.toString(), end.toString(), groupBy.name().toLowerCase(java.util.Locale.ROOT), found);
     }
 
     /**
@@ -199,25 +201,13 @@ public class OpenSearchTools {
         return new DocumentResult(document.index(), document.id(), document.data(), document.truncated());
     }
 
-    static IndexPattern validPattern(String value) {
-        if (value == null || value.isEmpty() || value.length() > 255) {
-            throw new InvalidToolArgumentException("index_pattern must be 1-255 characters");
+    static String validPrefix(String value) {
+        if (value == null || !INDEX_PREFIX.matcher(value).matches()) {
+            throw new InvalidToolArgumentException("index_pattern must be one index prefix: lower-case letters, digits,"
+                    + " '.', '_' or '-', starting with a letter or digit; wildcards, lists, ':', '<', date math and"
+                    + " '_all' are not accepted");
         }
-        if (value.equals("*") || value.equals("_all")) {
-            throw new InvalidToolArgumentException("index_pattern must start with an index prefix; '*' and '_all' are not accepted");
-        }
-        if (value.startsWith("-")) {
-            throw new InvalidToolArgumentException("index_pattern must not start with '-' (exclusions are not supported)");
-        }
-        if (value.startsWith(".")) {
-            throw new InvalidToolArgumentException("index_pattern must not name hidden or system indices (leading '.')");
-        }
-        if (!INDEX_PATTERN.matcher(value).matches()) {
-            throw new InvalidToolArgumentException("index_pattern must be one name of lower-case letters, digits and '-',"
-                    + " optionally ending with '*'; lists, ':', '<', date math and other wildcards are not accepted");
-        }
-        boolean wildcard = value.endsWith("*");
-        return new IndexPattern(wildcard ? value.substring(0, value.length() - 1) : value, wildcard);
+        return value;
     }
 
     static String validIndexName(String value) {

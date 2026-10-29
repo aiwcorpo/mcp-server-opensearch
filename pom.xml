@@ -36,7 +36,7 @@
         <java.version>25</java.version>
         <maven.compiler.release>25</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <mcp-platform.version>3.0.0-beta-4</mcp-platform.version>
+        <mcp-platform.version>3.0.0-beta-7</mcp-platform.version>
     </properties>
 
     <dependencyManagement>

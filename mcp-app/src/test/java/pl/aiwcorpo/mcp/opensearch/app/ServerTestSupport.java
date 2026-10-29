@@ -39,6 +39,8 @@ abstract class ServerTestSupport {
     static final String GRANT_TEAM_A = "mcp-opensearch-idx-logs-team-a";
     static final String GRANT_TEAM_B = "mcp-opensearch-idx-logs-team-b";
     static final String ENDPOINT = "/mcp";
+    static final String CREDENTIAL_TYPE = "token-exchange";
+    static final String MANIFEST_FILE = "target/mcp-manifest.json";
     static final Set<String> CONTRACT_SYSTEMS = contractSystems();
 
     static final TestGateway GATEWAY = TestGateway.start(SERVER_ID);
@@ -47,6 +49,10 @@ abstract class ServerTestSupport {
     @DynamicPropertySource
     static void environment(DynamicPropertyRegistry registry) {
         GATEWAY.serverProperties().forEach((name, value) -> registry.add(name, () -> value));
+        // TestGateway defaults to the types of a user-secret system; this one exchanges the user's token.
+        registry.add("aiwcorpo.mcp.platform.manifest.accepted-credential-types", () -> CREDENTIAL_TYPE);
+        // The artifact the CI step registers in the gateway; ManifestTest checks it against GET /mcp-manifest.
+        registry.add("aiwcorpo.mcp.platform.manifest.output-file", () -> MANIFEST_FILE);
         registry.add("opensearch.backend.base-url", BACKEND::baseUrl);
         registry.add("opensearch.scope.allowed-index-prefixes", () -> "logs-team-a,logs-team-b");
         // OpenSearch has no tags; the server classifies by prefix. The policy forbids what is tagged "restricted".
@@ -66,7 +72,7 @@ abstract class ServerTestSupport {
 
     /** An MCP client that reaches the server the way the gateway does, with {@code credential} as C3 header. */
     McpSyncClient clientWithCredential(String credential) {
-        return clientWithCredential(credential, "user-secret");
+        return clientWithCredential(credential, CREDENTIAL_TYPE);
     }
 
     /** As {@link #clientWithCredential(String)}, with another {@code X-MCP-Credential-Type} (C3). */
@@ -81,7 +87,7 @@ abstract class ServerTestSupport {
 
     /** A caller in exactly these groups. */
     McpSyncClient clientInGroups(String credential, String... groups) {
-        return clientAs(user -> user.username("jkowalski").groups(List.of(groups)), credential, "user-secret");
+        return clientAs(user -> user.username("jkowalski").groups(List.of(groups)), credential, CREDENTIAL_TYPE);
     }
 
     /** Same, with the JWT claims of the caller set by {@code user} (a call through a link carries {@code vs}). */

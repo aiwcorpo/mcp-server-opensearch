@@ -20,7 +20,7 @@ class GatewayLinkClaimsTest extends ServerTestSupport {
                     reader(user);
                     user.virtualServer("logs-review", Map.of());
                 },
-                "Bearer opensearch-token-of-jkowalski-5c1e", "user-secret")) {
+                "Bearer opensearch-token-of-jkowalski-5c1e", CREDENTIAL_TYPE)) {
             McpSchema.CallToolResult result = call(client, "get_document",
                     Map.of("index", "logs-team-a-2026.10.27", "id", "Xk3n8ZIBdLrT0q1aHf2p"));
 

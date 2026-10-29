@@ -7,6 +7,7 @@ import pl.aiwcorpo.mcp.opensearch.core.domain.SearchLimits;
 import pl.aiwcorpo.mcp.opensearch.core.port.in.OpenSearchUseCase;
 import pl.aiwcorpo.mcp.opensearch.core.port.out.IndexScopeProvider;
 import pl.aiwcorpo.mcp.opensearch.core.port.out.OpenSearchPort;
+import pl.aiwcorpo.mcp.opensearch.core.port.out.ScopedIndices;
 import pl.aiwcorpo.mcp.opensearch.integration.OpenSearchSearchProperties;
 
 /** Assembles the hexagon: framework-free use cases from mcp-application, adapters from mcp-integration. */
@@ -14,8 +15,9 @@ import pl.aiwcorpo.mcp.opensearch.integration.OpenSearchSearchProperties;
 public class ApplicationWiringConfiguration {
 
     @Bean
-    OpenSearchUseCase openSearchUseCase(OpenSearchPort openSearch, IndexScopeProvider scopes) {
-        return new OpenSearchService(openSearch, scopes);
+    OpenSearchUseCase openSearchUseCase(OpenSearchPort openSearch, IndexScopeProvider scopes,
+            ScopedIndices indices) {
+        return new OpenSearchService(openSearch, scopes, indices);
     }
 
     @Bean

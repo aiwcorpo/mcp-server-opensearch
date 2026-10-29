@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import io.modelcontextprotocol.client.McpSyncClient;
 import io.modelcontextprotocol.spec.McpSchema;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import org.assertj.core.api.InstanceOfAssertFactories;
 import org.junit.jupiter.api.BeforeEach;
@@ -24,6 +25,9 @@ class SearchLogsToolTest extends ServerTestSupport {
         BACKEND.reset();
     }
 
+    /** The scope of {@link #reader}: both granted prefixes, each as the name and as the children. */
+    private static final String SCOPE_EXPRESSION = "logs-team-a,logs-team-a-*,logs-team-b,logs-team-b-*";
+
     private static Map<String, Object> args(String pattern) {
         Map<String, Object> args = new HashMap<>();
         args.put("index_pattern", pattern);
@@ -34,10 +38,14 @@ class SearchLogsToolTest extends ServerTestSupport {
         return args;
     }
 
+    private static List<String> searchPaths() {
+        return BACKEND.requests().stream().filter(r -> r.path().endsWith("/_search")).map(StubBackend.Request::decodedPath).toList();
+    }
+
     @Test
-    void searchesAsTheUserAndReturnsOnlyConfiguredFieldsOfAllowedIndices() {
+    void searchesTheNamedIndicesAsTheUserAndReturnsOnlyConfiguredFieldsOfAllowedOnes() {
         try (McpSyncClient client = clientWithCredential(PAT)) {
-            McpSchema.CallToolResult result = call(client, "search_logs", args("logs-team-a-*"));
+            McpSchema.CallToolResult result = call(client, "search_logs", args("logs-team-a"));
 
             assertThat(result.isError()).as(text(result)).isFalse();
             assertThat(text(result))
@@ -53,16 +61,18 @@ class SearchLogsToolTest extends ServerTestSupport {
                     .as("fields outside result-fields stay in the adapter").doesNotContain("not-for-the-model")
                     .as("hits of indices outside the prefixes are dropped").doesNotContain("secret-hr-1", "salary", "logs-team-ab-1", "neighbour");
         }
-        assertThat(BACKEND.requests().stream().map(StubBackend.Request::path)).containsExactly(
-                "/_resolve/index/logs-team-a-%2A", "/logs-team-a-%2A/_search", "/_resolve/index/logs-team-a-2026.10.27",
-                "/_resolve/index/logs-team-a-2026.10.26", "/_resolve/index/logs-team-a-hr-1");
+        assertThat(searchPaths()).as("names, one by one: no pattern, no alias, no restricted index, no neighbour")
+                .containsExactly("/logs-team-a-2026.10.26,logs-team-a-2026.10.27/_search");
         StubBackend.Request resolve = BACKEND.requests().get(0);
-        assertThat(resolve.path()).isEqualTo("/_resolve/index/logs-team-a-%2A");
-        assertThat(resolve.query()).contains("expand_wildcards=open");
-        StubBackend.Request search = BACKEND.requests().get(1);
+        assertThat(resolve.method()).isEqualTo("GET");
+        assertThat(resolve.decodedPath()).as("the only pattern is the scope of the caller").isEqualTo("/_resolve/index/" + SCOPE_EXPRESSION);
+        assertThat(resolve.query()).isEqualTo("expand_wildcards=open");
+        assertThat(BACKEND.requests().stream().filter(r -> r.method().equals("GET")).map(StubBackend.Request::decodedPath))
+                .as("the resolution is repeated for the hits, never reused").containsOnly("/_resolve/index/" + SCOPE_EXPRESSION);
+        StubBackend.Request search = BACKEND.requests().stream().filter(r -> r.path().endsWith("/_search")).findFirst().orElseThrow();
         assertThat(search.method()).isEqualTo("POST");
-        assertThat(search.path()).isEqualTo("/logs-team-a-%2A/_search");
-        assertThat(search.query()).contains("expand_wildcards=open", "allow_partial_search_results=false");
+        assertThat(search.query()).contains("expand_wildcards=open", "ignore_unavailable=true", "allow_no_indices=true",
+                "allow_partial_search_results=false");
         assertThat(search.body())
                 .contains("\"multi_match\":{\"query\":\"payment failed\",\"fields\":[\"message\"],\"type\":\"best_fields\","
                                 + "\"operator\":\"and\",\"lenient\":true}",
@@ -74,17 +84,21 @@ class SearchLogsToolTest extends ServerTestSupport {
     }
 
     @Test
-    void aWildcardRightAfterAPrefixStopsAtTheDash() {
+    void aFullIndexNameIsAPrefixOfItselfAndSearchesThatIndexAlone() {
         try (McpSyncClient client = clientWithCredential(PAT)) {
-            McpSchema.CallToolResult result = call(client, "search_logs", args("logs-team-a*"));
-
-            assertThat(result.isError()).as(text(result)).isFalse();
+            assertThat(call(client, "search_logs", args("logs-team-a-2026.10.27")).isError()).isFalse();
         }
-        // The comma is written by the server and sent encoded, the wildcard too; this is what OpenSearch decodes
-        // before it splits the expression.
-        assertThat(BACKEND.requests().get(0).path()).isEqualTo("/_resolve/index/logs-team-a%2Clogs-team-a-%2A");
-        assertThat(BACKEND.requests().get(1).path()).isEqualTo("/logs-team-a%2Clogs-team-a-%2A/_search");
-        assertThat(BACKEND.requests().get(1).decodedPath()).isEqualTo("/logs-team-a,logs-team-a-*/_search");
+        assertThat(searchPaths()).containsExactly("/logs-team-a-2026.10.27/_search");
+    }
+
+    @Test
+    void aShorterPrefixReachesOnlyWhatTheScopeCovers() {
+        try (McpSyncClient client = clientInGroups(PAT, READ_GROUP, GRANT_TEAM_A)) {
+            assertThat(call(client, "search_logs", args("logs")).isError()).isFalse();
+            assertThat(call(client, "search_logs", args("logs-team")).isError()).isFalse();
+        }
+        assertThat(searchPaths()).as("team b, the neighbour and secret-hr-1 are not in the request")
+                .containsOnly("/logs-team-a-2026.10.26,logs-team-a-2026.10.27/_search");
     }
 
     @Test
@@ -102,7 +116,8 @@ class SearchLogsToolTest extends ServerTestSupport {
             Map<String, Object> properties = properties(schema);
             assertThat(properties.keySet()).containsExactlyInAnyOrder("index_pattern", "text", "level", "service", "from", "to", "size");
             assertThat(properties.get("index_pattern")).asInstanceOf(InstanceOfAssertFactories.MAP)
-                    .containsEntry("maxLength", 255).containsEntry("pattern", "^[a-z0-9-]+\\*?$");
+                    .containsEntry("maxLength", 255).as("the pattern comes from the contracts, not from a copy in the server")
+                    .containsEntry("pattern", "^(?:[a-z0-9][a-z0-9._-]{0,253}[a-z0-9_]|[a-z0-9])$");
             assertThat(properties.get("text")).asInstanceOf(InstanceOfAssertFactories.MAP).containsEntry("maxLength", 512);
             assertThat(properties.get("size")).asInstanceOf(InstanceOfAssertFactories.MAP).containsEntry("maximum", 100);
         }
@@ -111,7 +126,7 @@ class SearchLogsToolTest extends ServerTestSupport {
     @Test
     void withoutCredentialAsksToConnectTheAccountAndDoesNotCallOpenSearch() {
         try (McpSyncClient client = clientWithCredential(null)) {
-            assertCredentialRequired(call(client, "search_logs", args("logs-team-a-*")));
+            assertCredentialRequired(call(client, "search_logs", args("logs-team-a")));
         }
         assertThat(BACKEND.requests()).isEmpty();
     }
@@ -119,62 +134,104 @@ class SearchLogsToolTest extends ServerTestSupport {
     @Test
     void credentialRejectedByOpenSearchAsksToReconnect() {
         try (McpSyncClient client = clientWithCredential(StubBackend.EXPIRED_CREDENTIAL)) {
-            assertCredentialRequired(call(client, "search_logs", args("logs-team-a-*")));
+            assertCredentialRequired(call(client, "search_logs", args("logs-team-a")));
         }
     }
 
     @Test
-    void aTokenExchangeCredentialIsUsedLikeAUserSecret() {
-        try (McpSyncClient client = clientWithCredential("Bearer exchanged-jwt-for-opensearch", "token-exchange")) {
-            assertThat(call(client, "search_logs", args("logs-team-a-*")).isError()).isFalse();
+    void theExchangedTokenGoesToOpenSearchAsBearerOnEveryRequest() {
+        try (McpSyncClient client = clientWithCredential("Bearer exchanged-jwt-for-opensearch")) {
+            assertThat(call(client, "search_logs", args("logs-team-a")).isError()).isFalse();
         }
-        assertThat(BACKEND.authorizations()).containsOnly("Bearer exchanged-jwt-for-opensearch");
+        assertThat(BACKEND.authorizations()).isNotEmpty().containsOnly("Bearer exchanged-jwt-for-opensearch");
     }
 
     @Test
-    void aServiceAccountOrForeignSchemeIsNotUsed() {
-        try (McpSyncClient client = clientWithCredential("Bearer shared-service-token", "service-account")) {
-            assertCredentialRequired(call(client, "search_logs", args("logs-team-a-*")));
-        }
-        try (McpSyncClient client = clientWithCredential("ApiKey abc123", "user-secret")) {
-            assertCredentialRequired(call(client, "search_logs", args("logs-team-a-*")));
+    void aCredentialTypeOutsideTheServersSetIsRefusedBeforeAnythingElse() {
+        for (String type : new String[] {"service-account", "user-secret", "user-oauth", "Token-Exchange", "api-key"}) {
+            try (McpSyncClient client = clientWithCredential("Bearer shared-service-token", type)) {
+                McpSchema.CallToolResult result = call(client, "search_logs", args("logs-team-a"));
+
+                assertThat(result.isError()).as(type).isTrue();
+                assertThat(text(result)).as(type).contains("\"error\":\"internal_error\"").doesNotContain("shared-service-token");
+            }
         }
         assertThat(BACKEND.requests()).isEmpty();
     }
 
     @Test
-    void anAliasLeadingOutsideThePrefixesIsNotFoundOrDeniedAndNeverSearched() {
-        try (McpSyncClient client = clientWithCredential(PAT)) {
-            McpSchema.CallToolResult byName = call(client, "search_logs", args("logs-team-b-leak"));
-            McpSchema.CallToolResult byWildcard = call(client, "search_logs", args("logs-team-b-l*"));
-            McpSchema.CallToolResult toHiddenIndex = call(client, "search_logs", args("logs-team-b-hidden-target"));
-
-            assertThat(text(byName)).contains("\"error\":\"not_found_or_denied\"").doesNotContain("secret-hr");
-            assertThat(text(byWildcard)).isEqualTo(text(byName));
-            assertThat(text(toHiddenIndex)).as("an in-scope alias must not lead to a hidden index")
-                    .isEqualTo(text(byName));
+    void aSchemeOtherThanBearerIsNotUsed() {
+        try (McpSyncClient client = clientWithCredential("ApiKey abc123")) {
+            assertCredentialRequired(call(client, "search_logs", args("logs-team-a")));
         }
-        assertThat(BACKEND.requests()).noneMatch(r -> r.path().endsWith("/_search"));
+        try (McpSyncClient client = clientWithCredential("Basic am5vd2Fsc2tpOnB3")) {
+            assertCredentialRequired(call(client, "search_logs", args("logs-team-a")));
+        }
+        assertThat(BACKEND.requests()).isEmpty();
     }
 
     @Test
-    void forbiddenMissingAndHiddenIndicesLookTheSame() {
-        try (McpSyncClient client = clientWithCredential(PAT)) {
-            McpSchema.CallToolResult forbidden = call(client, "search_logs", args("logs-team-a-restricted"));
-            McpSchema.CallToolResult missing = call(client, "search_logs", args("logs-team-a-nothing"));
-            McpSchema.CallToolResult hidden = call(client, "search_logs", args("logs-team-a-hidden"));
+    void anAliasNamedLikeAGrantedPrefixIsNeverQueriedNorCounted() {
+        try (McpSyncClient client = clientInGroups(PAT, READ_GROUP, GRANT_TEAM_A)) {
+            McpSchema.CallToolResult result = call(client, "search_logs", args("logs-team-a"));
+            assertThat(result.isError()).as(text(result)).isFalse();
+            assertThat(text(result)).doesNotContain("logs-team-b-1");
 
-            assertThat(text(forbidden)).contains("\"error\":\"not_found_or_denied\"");
-            assertThat(text(missing)).isEqualTo(text(forbidden));
-            assertThat(text(hidden)).isEqualTo(text(forbidden));
+            McpSchema.CallToolResult byAliasName = call(client, "search_logs", args("logs-team-a-all"));
+            assertThat(byAliasName.isError()).as(text(byAliasName)).isFalse();
+            assertThat(text(byAliasName)).contains("\"hits\":[]");
         }
-        assertThat(BACKEND.requests()).noneMatch(r -> r.path().endsWith("/_search"));
+        assertThat(searchPaths()).as("the alias that points at team b appears in no request")
+                .containsExactly("/logs-team-a-2026.10.26,logs-team-a-2026.10.27/_search");
     }
 
     @Test
-    void aWildcardMatchingNothingIsAnEmptyResult() {
-        try (McpSyncClient client = clientWithCredential(PAT)) {
-            McpSchema.CallToolResult result = call(client, "search_logs", args("logs-team-b-nothing-*"));
+    void anAliasMatchingThePrefixPatternButLeadingOutsideIsIgnored() {
+        try (McpSyncClient client = clientInGroups(PAT, READ_GROUP, GRANT_TEAM_B)) {
+            for (String prefix : new String[] {"logs-team-b-all", "logs-team-b-leak", "logs-team-b-hidden-target", "logs-team-b-two",
+                    "logs-team-b-filtered"}) {
+                McpSchema.CallToolResult result = call(client, "search_logs", args(prefix));
+
+                assertThat(result.isError()).as(prefix + ": " + text(result)).isFalse();
+                assertThat(text(result)).as(prefix).contains("\"hits\":[]").doesNotContain("secret-hr", "logs-team-a");
+            }
+            assertThat(call(client, "search_logs", args("logs-team-b")).isError()).isFalse();
+        }
+        assertThat(searchPaths()).as("only the concrete index of team b; the hidden index named like the prefix is left out")
+                .containsExactly("/logs-team-b-1/_search");
+    }
+
+    @Test
+    void aDataStreamAndItsBackingIndicesAreNeverQueried() {
+        try (McpSyncClient client = clientInGroups(PAT, READ_GROUP, GRANT_TEAM_B)) {
+            McpSchema.CallToolResult byName = call(client, "search_logs", args("logs-team-b-stream"));
+            assertThat(byName.isError()).as(text(byName)).isFalse();
+            assertThat(text(byName)).contains("\"hits\":[]");
+            assertThat(call(client, "search_logs", args("logs-team-b")).isError()).isFalse();
+        }
+        assertThat(searchPaths()).containsExactly("/logs-team-b-1/_search");
+        assertThat(BACKEND.requests()).filteredOn(r -> r.path().endsWith("/_search"))
+                .noneMatch(r -> r.decodedPath().contains("stream") || r.decodedPath().contains(".ds-"));
+    }
+
+    @Test
+    void anIndexFromAnotherTeamAndAMissingOneGiveTheSameEmptyResult() {
+        try (McpSyncClient client = clientInGroups(PAT, READ_GROUP, GRANT_TEAM_A)) {
+            String missing = text(call(client, "search_logs", args("logs-team-a-nothing"))).replace("logs-team-a-nothing", "PREFIX");
+            assertThat(missing).contains("\"hits\":[]");
+            for (String outside : new String[] {"logs-team-b", "logs-team-b-1", "secret-hr-1", "secret", "logs-team-ab", "logs-team-ab-1",
+                    "logs-team-a-restricted", "logs-team-a-hidden", "logs-team-a-hr-1"}) {
+                assertThat(text(call(client, "search_logs", args(outside))).replace(outside, "PREFIX")).as(outside).isEqualTo(missing);
+            }
+        }
+        assertThat(BACKEND.requests()).as("nothing reached OpenSearch but the resolution of the caller's own scope")
+                .allMatch(r -> r.method().equals("GET") && r.decodedPath().equals("/_resolve/index/logs-team-a,logs-team-a-*"));
+    }
+
+    @Test
+    void anEmptyClusterIsAnEmptyResult() {
+        try (McpSyncClient client = clientWithCredential(StubBackend.EMPTY_CLUSTER_CREDENTIAL)) {
+            McpSchema.CallToolResult result = call(client, "search_logs", args("logs-team-a"));
 
             assertThat(result.isError()).as(text(result)).isFalse();
             assertThat(text(result)).contains("\"hits\":[]");
@@ -183,21 +240,13 @@ class SearchLogsToolTest extends ServerTestSupport {
     }
 
     @Test
-    void aDataStreamIsRejected() {
-        try (McpSyncClient client = clientWithCredential(PAT)) {
-            McpSchema.CallToolResult result = call(client, "search_logs", args("logs-team-b-s*"));
-
-            assertThat(text(result)).contains("\"error\":\"invalid_argument\"", "data stream");
-        }
-        assertThat(BACKEND.requests()).noneMatch(r -> r.path().endsWith("/_search"));
-    }
-
-    @Test
     void indexPatternsBeyondOnePlainPrefixAreRejectedBeforeOpenSearch() {
         try (McpSyncClient client = clientWithCredential(PAT)) {
-            for (String pattern : new String[] {"*", "_all", "-logs-team-a-*", ".security", ".ds-logs-team-a-stream-000001",
-                    "logs-team-a-*,secret-*", "logs-team-a-2026,secret-hr-1", "remote:logs-team-a-*", "<logs-team-a-{now/d}>",
-                    "logs-*-a", "logs-team-a-**", "LOGS-TEAM-A", "logs-team-a-2026.10.27", "logs-team-a-?", "", "a".repeat(256)}) {
+            for (String pattern : new String[] {"*", "_all", "-logs-team-a-*", ".security", ".ds-logs-team-a-stream-000001", ".",
+                    "logs-team-a-*", "logs-team-a*", "logs-team-a-*,secret-*", "logs-team-a,logs-team-b", ",", "logs-team-a,", ",logs-team-a",
+                    "logs-team-a-2026,secret-hr-1", "remote:logs-team-a-*", "<logs-team-a-{now/d}>", "logs-team-a,-logs-team-a-hr-1",
+                    "logs-*-a", "logs-team-a-**", "LOGS-TEAM-A", "logs-team-a-", "logs-team-a.", "logs team a", "logs-team-a/", "logs-team-a?", "_logs", "",
+                    "a".repeat(256)}) {
                 McpSchema.CallToolResult result = call(client, "search_logs", args(pattern));
 
                 assertInvalidArgument(result);
@@ -210,25 +259,12 @@ class SearchLogsToolTest extends ServerTestSupport {
     }
 
     @Test
-    void aWellFormedPatternOutsideTheScopeLooksLikeAMissingIndex() {
-        try (McpSyncClient client = clientWithCredential(PAT)) {
-            String missing = text(call(client, "search_logs", args("logs-team-a-nothing")));
-            assertThat(missing).contains("\"error\":\"not_found_or_denied\"");
-            for (String outside : new String[] {"secret-*", "logs-team-ab*", "logs-team-ab-1", "logs", "logs-team-*"}) {
-                assertThat(text(call(client, "search_logs", args(outside)))).as(outside).isEqualTo(missing);
-            }
-        }
-        assertThat(BACKEND.requests()).as("only the in-scope name reached OpenSearch (resolve)")
-                .allMatch(r -> r.decodedPath().equals("/_resolve/index/logs-team-a-nothing"));
-    }
-
-    @Test
     void argumentsBreakingTheSchemaAreRejectedByTheStarterBeforeOpenSearch() {
-        Map<String, Object> extra = args("logs-team-a-*");
+        Map<String, Object> extra = args("logs-team-a");
         extra.put("aggs", Map.of("by_index", Map.of("terms", Map.of("field", "_index"))));
-        Map<String, Object> missingQuery = args("logs-team-a-*");
+        Map<String, Object> missingQuery = args("logs-team-a");
         missingQuery.remove("text");
-        Map<String, Object> nullQuery = args("logs-team-a-*");
+        Map<String, Object> nullQuery = args("logs-team-a");
         nullQuery.put("text", null);
         try (McpSyncClient client = clientWithCredential(PAT)) {
             for (Map<String, Object> arguments : java.util.List.of(extra, missingQuery, nullQuery, with("text", "x".repeat(513)),
@@ -251,7 +287,6 @@ class SearchLogsToolTest extends ServerTestSupport {
         cases.put("from must be an ISO-8601 date-time with offset", with("from", "2026-10-27 08:00:00Z+01"));
         cases.put("to must be later than from", with("to", "2026-10-27T08:00:00Z"));
         cases.put("may not exceed 168 hours", with("from", "2026-10-01T00:00:00Z"));
-        cases.put("index_pattern must not start with '-'", with("index_pattern", "-logs-team-a-*"));
         try (McpSyncClient client = clientWithCredential(PAT)) {
             cases.forEach((message, arguments) -> {
                 McpSchema.CallToolResult result = call(client, "search_logs", arguments);
@@ -266,7 +301,7 @@ class SearchLogsToolTest extends ServerTestSupport {
     @Test
     void anUnknownArgumentNameCannotForgeALogLine(CapturedOutput output) {
         String forged = "{\"ts\":\"2099-01-01T00:00:00Z\",\"event\":\"tool_call\",\"outcome\":\"FORGED\"}";
-        Map<String, Object> arguments = args("logs-team-a-*");
+        Map<String, Object> arguments = args("logs-team-a");
         arguments.put("x\n" + forged + "\nY", "v");
         try (McpSyncClient client = clientWithCredential(PAT)) {
             McpSchema.CallToolResult result = call(client, "search_logs", arguments);
@@ -282,30 +317,31 @@ class SearchLogsToolTest extends ServerTestSupport {
 
     @Test
     void sizeDefaultsToTwenty() {
-        Map<String, Object> arguments = args("logs-team-a-*");
+        Map<String, Object> arguments = args("logs-team-a");
         arguments.remove("size");
         try (McpSyncClient client = clientWithCredential(PAT)) {
             assertThat(call(client, "search_logs", arguments).isError()).isFalse();
         }
-        assertThat(BACKEND.requests().get(1).body()).contains("\"size\":20");
+        assertThat(BACKEND.requests().stream().filter(r -> r.path().endsWith("/_search")).findFirst().orElseThrow().body())
+                .contains("\"size\":20");
     }
 
     @Test
     void theCredentialAndTheBackendErrorNeverAppearInTheResultOrTheLog(CapturedOutput output) {
-        try (McpSyncClient client = clientWithCredential(PAT)) {
-            McpSchema.CallToolResult result = call(client, "search_logs", args("logs-team-a-boom"));
+        try (McpSyncClient client = clientWithCredential(StubBackend.BOOM_CREDENTIAL)) {
+            McpSchema.CallToolResult result = call(client, "search_logs", args("logs-team-a"));
 
             assertThat(result.isError()).isTrue();
-            assertThat(text(result)).contains("\"error\":\"internal_error\"").doesNotContain("opensearch-token");
+            assertThat(text(result)).contains("\"error\":\"internal_error\"").doesNotContain("secret-boom-token");
         }
-        assertThat(output.getAll()).contains("\"tool\":\"search_logs\"").doesNotContain("opensearch-token-of")
+        assertThat(output.getAll()).contains("\"tool\":\"search_logs\"").doesNotContain("secret-boom-token")
                 .as("the backend's error body stays out of the log").doesNotContain("boom\"");
     }
 
     @Test
     void anUnreadableBodyStaysOutOfTheResultAndTheLog(CapturedOutput output) {
-        try (McpSyncClient client = clientWithCredential(PAT)) {
-            McpSchema.CallToolResult result = call(client, "search_logs", args("logs-team-a-badjson"));
+        try (McpSyncClient client = clientWithCredential(StubBackend.BADJSON_CREDENTIAL)) {
+            McpSchema.CallToolResult result = call(client, "search_logs", args("logs-team-a"));
 
             assertThat(result.isError()).isTrue();
             assertThat(text(result)).contains("\"error\":\"internal_error\"").doesNotContain(StubBackend.BODY_MARKER);
@@ -315,8 +351,8 @@ class SearchLogsToolTest extends ServerTestSupport {
 
     @Test
     void aRedirectIsNotFollowedAndNotReadAsMissing() {
-        try (McpSyncClient client = clientWithCredential(PAT)) {
-            McpSchema.CallToolResult result = call(client, "search_logs", args("logs-team-a-302"));
+        try (McpSyncClient client = clientWithCredential(StubBackend.REDIRECT_CREDENTIAL)) {
+            McpSchema.CallToolResult result = call(client, "search_logs", args("logs-team-a"));
 
             assertThat(text(result)).contains("\"error\":\"internal_error\"");
         }
@@ -324,7 +360,7 @@ class SearchLogsToolTest extends ServerTestSupport {
     }
 
     private static Map<String, Object> with(String name, Object value) {
-        Map<String, Object> arguments = args("logs-team-a-*");
+        Map<String, Object> arguments = args("logs-team-a");
         arguments.put(name, value);
         return arguments;
     }

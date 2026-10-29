@@ -19,7 +19,7 @@ do modelu, który może go potraktować jak instrukcję. Wzorcami są `search_lo
 4. `mcp-tools`: cienka metoda `@Tool` z `@ToolRisk`, walidacją argumentów i wywołaniem przypadku użycia;
    mapowanie wyjątku domeny na kod C10 w `OpenSearchToolErrors`. Każdy argument tekstowy ma
    `@ArgumentLimits(maxLength = ..., pattern = "^...$")` z tymi samymi stałymi, których używa walidacja w kodzie
-   (wzorzec: `OpenSearchTools.INDEX_PATTERN_REGEX`); limity trafiają do `inputSchema`, więc widzą je gateway i
+   (wzorzec: `OpenSearchTools.DOCUMENT_ID_REGEX`); limity trafiają do `inputSchema`, więc widzą je gateway i
    manifest C6. `pattern` w JSON Schema nie jest kotwiczony: zawsze `^` i `$`.
 5. `mcp-app`: dopisanie beana narzędzia w `McpToolsConfiguration` przez `SchemaLimitedToolCallbacks.of(...)`
    (jawna lista; sam `@Tool` nie wystarczy, a `MethodToolCallbackProvider` pominąłby `@ArgumentLimits`),

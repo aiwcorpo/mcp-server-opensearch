@@ -33,18 +33,22 @@ import java.util.stream.Collectors;
  *   <li>{@code logs-team-a-restricted}: exists, the caller has no permission: 403 when named, skipped by
  *       wildcards (OpenSearch Security with {@code do_not_fail_on_forbidden});</li>
  *   <li>{@code logs-team-a-hidden}: an index with {@code index.hidden=true};</li>
- *   <li>alias {@code logs-team-b-all} -> {@code logs-team-a-2026.10.27};</li>
+ *   <li>alias {@code logs-team-b-all} -> {@code logs-team-a-2026.10.27} and alias {@code logs-team-a-all} ->
+ *       {@code logs-team-b-1}: aliases named like a granted prefix that lead to the other team;</li>
+ *   <li>{@code logs-team-b}: an index named exactly like the prefix with {@code index.hidden=true} (an exact name
+ *       reaches it, a wildcard does not);</li>
  *   <li>under {@code logs-team-b}: alias {@code logs-team-b-leak} -> {@code secret-hr-1}, alias {@code logs-team-b-two} -> both team-a
  *       indices, alias {@code logs-team-b-hidden-target} -> {@code logs-team-a-hidden} (which {@code _resolve/index}
  *       does not report as hidden), alias {@code logs-team-b-filtered} -> {@code logs-team-a-2026.10.27} with a filter
  *       and routing, {@code logs-team-b-routed-index} and {@code logs-team-b-routed-search} -> the same index with only an index
  *       or only a search routing and no filter, data stream {@code logs-team-b-stream};</li>
- *   <li>an index expression containing {@code boom}: 500 echoing the caller's Authorization header;</li>
- *   <li>misbehaving answers: {@code logs-team-a-badjson} (resolve answers HTML), {@code logs-team-a-302}
- *       (redirect to a second server that records what follows), document ids {@code doc-badjson},
- *       {@code doc-302}, {@code doc-slow} (after {@link #SLOW_MILLIS}) and {@code doc-huge}
- *       ({@link #HUGE_BYTES} of source).</li>
+ *   <li>misbehaving answers, chosen by the credential because the server never sends what the model typed to
+ *       {@code _resolve/index}: {@link #BOOM_CREDENTIAL} (500 echoing the Authorization header),
+ *       {@link #BADJSON_CREDENTIAL} (resolve answers HTML), {@link #REDIRECT_CREDENTIAL} (redirect to a second server
+ *       that records what follows), {@link #EMPTY_CLUSTER_CREDENTIAL} (404 for every resolve); by document id {@code doc-badjson}, {@code doc-302}, {@code doc-slow} (after
+ *       {@link #SLOW_MILLIS}) and {@code doc-huge} ({@link #HUGE_BYTES} of source).</li>
  * </ul>
+ * A {@code _resolve/index} that matches nothing answers 404, as the platform library expects.
  * Paths and queries are recorded as they were on the wire (percent-encoded), so a test sees the encoding the
  * client chose; routing in the stub uses the decoded path, as OpenSearch does.
  * The search answer deliberately ignores the {@code _index} filter and {@code _source} includes and also returns
@@ -54,6 +58,11 @@ import java.util.stream.Collectors;
 final class StubBackend {
 
     static final String EXPIRED_CREDENTIAL = "Bearer expired-token-of-jkowalski";
+    static final String BOOM_CREDENTIAL = "Bearer secret-boom-token-9f2";
+    static final String BADJSON_CREDENTIAL = "Bearer fault-badjson-token";
+    /** Resolve answers 404: no index of the scope exists. */
+    static final String EMPTY_CLUSTER_CREDENTIAL = "Bearer fault-empty-cluster-token";
+    static final String REDIRECT_CREDENTIAL = "Bearer fault-redirect-token";
     static final String BODY_MARKER = "SECRETBODYTOKEN123";
     static final long SLOW_MILLIS = 4_000;
     static final int HUGE_BYTES = 256 * 1024;
@@ -62,10 +71,11 @@ final class StubBackend {
 
     private static final List<String> INDICES = List.of("logs-team-a-2026.10.26", "logs-team-a-2026.10.27",
             "logs-team-ab-1", "secret-hr-1", "logs-team-a-restricted", "logs-team-a-hidden", "logs-team-a-hr-1",
-            "logs-team-b-1");
-    private static final Set<String> HIDDEN = Set.of("logs-team-a-hidden");
+            "logs-team-b-1", "logs-team-b");
+    private static final Set<String> HIDDEN = Set.of("logs-team-a-hidden", "logs-team-b");
     private static final Set<String> FORBIDDEN = Set.of("logs-team-a-restricted");
     private static final Map<String, List<String>> ALIASES = Map.of(
+            "logs-team-a-all", List.of("logs-team-b-1"),
             "logs-team-b-all", List.of("logs-team-a-2026.10.27"),
             "logs-team-b-leak", List.of("secret-hr-1"),
             "logs-team-b-two", List.of("logs-team-a-2026.10.26", "logs-team-a-2026.10.27"),
@@ -73,11 +83,7 @@ final class StubBackend {
             "logs-team-b-filtered", List.of("logs-team-a-2026.10.27"),
             "logs-team-b-routed-index", List.of("logs-team-a-2026.10.27"),
             "logs-team-b-routed-search", List.of("logs-team-a-2026.10.27"));
-    private static final Set<String> FILTERED_ALIASES = Set.of("logs-team-b-filtered");
-    private static final Map<String, String> ROUTING_ONLY_ALIASES = Map.of(
-            "logs-team-b-routed-index", "{\"index_routing\":\"1\"}",
-            "logs-team-b-routed-search", "{\"search_routing\":\"1\"}");
-    private static final List<String> DATA_STREAMS = List.of("logs-team-b-stream");
+    private static final List<String> DATA_STREAMS = List.of("logs-team-a-stream", "logs-team-b-stream");
 
     /** One request as OpenSearch saw it; {@code path} and {@code query} are the raw, percent-encoded wire forms. */
     record Request(String method, String path, String query, String authorization, String body) {
@@ -148,14 +154,14 @@ final class StubBackend {
                 exchange.getRequestURI().getRawQuery(), String.valueOf(authorization), body));
         if (EXPIRED_CREDENTIAL.equals(authorization)) {
             respond(exchange, 401, "{\"error\":{\"type\":\"security_exception\",\"reason\":\"token expired\"},\"status\":401}");
-        } else if (path.contains("boom")) {
+        } else if (BOOM_CREDENTIAL.equals(authorization)) {
             respond(exchange, 500, "{\"error\":\"boom\",\"seen\":\"" + authorization + "\"}");
-        } else if (path.equals("/_resolve/index/logs-team-a-badjson")) {
+        } else if (BADJSON_CREDENTIAL.equals(authorization) && path.startsWith("/_resolve/")) {
             respond(exchange, 200, "<html>" + BODY_MARKER + " login</html>");
-        } else if (path.equals("/_resolve/index/logs-team-a-302")) {
+        } else if (EMPTY_CLUSTER_CREDENTIAL.equals(authorization) && path.startsWith("/_resolve/")) {
+            respond(exchange, 404, "{\"error\":{\"type\":\"index_not_found_exception\"},\"status\":404}");
+        } else if (REDIRECT_CREDENTIAL.equals(authorization) && path.startsWith("/_resolve/")) {
             redirect(exchange);
-        } else if (path.startsWith("/_alias/")) {
-            alias(exchange, path.substring("/_alias/".length()));
         } else if (path.startsWith("/_resolve/index/")) {
             resolve(exchange, path.substring("/_resolve/index/".length()));
         } else if (path.endsWith("/_search") && "POST".equals(exchange.getRequestMethod())) {
@@ -168,22 +174,9 @@ final class StubBackend {
         }
     }
 
-    private void alias(HttpExchange exchange, String name) throws IOException {
-        List<String> targets = ALIASES.get(name);
-        if (targets == null) {
-            respond(exchange, 404, "{\"error\":\"alias [" + name + "] missing\",\"status\":404}");
-            return;
-        }
-        String settings = FILTERED_ALIASES.contains(name)
-                ? "{\"filter\":{\"term\":{\"service.name\":\"billing\"}},\"index_routing\":\"1\",\"search_routing\":\"1\"}"
-                : ROUTING_ONLY_ALIASES.getOrDefault(name, "{}");
-        respond(exchange, 200, targets.stream().map(i -> "\"" + i + "\":{\"aliases\":{\"" + name + "\":" + settings + "}}")
-                .collect(Collectors.joining(",", "{", "}")));
-    }
-
     private void redirect(HttpExchange exchange) throws IOException {
         exchange.getResponseHeaders().set("Location",
-                "http://127.0.0.1:" + elsewhere.getAddress().getPort() + "/_resolve/index/logs-team-a-302");
+                "http://127.0.0.1:" + elsewhere.getAddress().getPort() + "/_resolve/index/redirected");
         exchange.sendResponseHeaders(302, -1);
         exchange.close();
     }
@@ -209,13 +202,20 @@ final class StubBackend {
             ALIASES.keySet().stream().filter(a -> wildcard ? a.startsWith(base) : a.equals(base)).forEach(aliases::add);
             DATA_STREAMS.stream().filter(d -> wildcard ? d.startsWith(base) : d.equals(base)).forEach(streams::add);
         }
+        if (indices.isEmpty() && aliases.isEmpty() && streams.isEmpty() && !forbidden) {
+            respond(exchange, 404, "{\"error\":{\"type\":\"index_not_found_exception\",\"reason\":\"no such index\"},\"status\":404}");
+            return;
+        }
         if (forbidden) {
             respond(exchange, 403, "{\"error\":{\"type\":\"security_exception\",\"reason\":\"no permissions for"
                     + " [indices:admin/resolve/index]\"},\"status\":403}");
             return;
         }
-        String indicesJson = indices.stream().map(i -> "{\"name\":\"" + i + "\",\"attributes\":[\"open\""
-                + (HIDDEN.contains(i) ? ",\"hidden\"" : "") + "]}").collect(Collectors.joining(","));
+        List<String> indexEntries = new ArrayList<>(indices.stream().map(i -> "{\"name\":\"" + i
+                + "\",\"attributes\":[\"open\"" + (HIDDEN.contains(i) ? ",\"hidden\"" : "") + "]}").toList());
+        streams.forEach(d -> indexEntries.add("{\"name\":\".ds-" + d + "-000001\",\"attributes\":[\"open\","
+                + "\"hidden\"],\"data_stream\":\"" + d + "\"}"));
+        String indicesJson = String.join(",", indexEntries);
         String aliasesJson = aliases.stream().map(a -> "{\"name\":\"" + a + "\",\"indices\":["
                 + ALIASES.get(a).stream().map(i -> "\"" + i + "\"").collect(Collectors.joining(",")) + "]}")
                 .collect(Collectors.joining(","));

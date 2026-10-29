@@ -1,5 +1,28 @@
 # STATUS - mcp-server-opensearch (ws-04)
 
+M4: osiągnięty (2026-10-29) - serwer na starterze 3.0.0-beta-7 (kontrakty 4.1.0): `accepted-credential-types: [token-exchange]` (adapter przyjmuje tylko `token-exchange` + `Bearer`, token używany w jednym żądaniu, bez cache), CC-160 (do OpenSearch idzie tylko `GET _resolve/index` z wyrażeniem zakresu, wyszukiwanie i agregacje na liście nazw z `opensearchSearchTarget`, bez aliasów i strumieni, `get_document` przez `resolveIndexArgument`; `index_pattern` to prefiks `OpenSearchIndexPrefix` bez obejścia; `requireNoAliases` usunięte), `aggregate_logs` działa na konkretnych indeksach i nie liczy aliasów, stały tekst `not_found_or_denied`, manifest jako artefakt budowy `mcp-app/target/mcp-manifest.json`, README z licznikiem `mcp_audit_authentication_suppressed_total`; 112 testów (mcp-application 10, mcp-integration 18, mcp-tools 3, mcp-app 81), 0 błędów.
+
+## M4: kamienie pośrednie
+
+| Kamień | Zawartość | Status |
+| --- | --- | --- |
+| M4.1 | beta-4 -> beta-7 (BOM, kontrakty 4.1.0), typ poświadczenia `token-exchange`, stały tekst odmowy, manifest do pliku | zrobione |
+| M4.2 | CC-160: `ScopedIndices` (resolve bez cache, 404 = pusto, `opensearchSearchTarget`, `resolveIndexArgument`), prefiks zamiast wzorca, usunięcie aliasów z kodu | zrobione |
+| M4.3 | testy z wrogimi wzorcami i agregacjami bez aliasów, dokumentacja, grepy | zrobione |
+
+## M4: decyzje i otwarte punkty
+
+- Argument `index_pattern` zachował nazwę, ale jest prefiksem (`p` obejmuje `p` i `p-...`); `p*` i każdy wieloznacznik to teraz `invalid_argument` ze schematu. Zmienia `definitionHash`; nowe narzędzia z `UPDATE`/`DESTRUCTIVE` nie ma, więc rejestracja `READ_ONLY` z CI wystarcza.
+- `search_logs` i `aggregate_logs` przy pustym zakresie, prefiksie bez indeksu i prefiksie poza zakresem zwracają ten sam pusty wynik (wcześniej `not_found_or_denied` dla poprawnej nazwy spoza zakresu). `get_document` zostaje przy `not_found_or_denied`.
+- Limit 100 nazw indeksów w jednym żądaniu (ścieżka); więcej -> `invalid_argument`. Dobowe indeksy z całego roku pod jednym prefiksem tego nie spełnią; prefiks nie zawęża po dacie (`p` obejmuje `p-...`, nie `p-2026.10...`). Do decyzji: większy limit albo zawężanie po czasie.
+- Zachowanie `_resolve/index` na żywym klastrze (404 gdy nie istnieje indeks o nazwie dokładnie `p`) niepotwierdzone; starter beta-8 ma poprawić parametry (`ignore_unavailable`). Po wydaniu beta-8 podbić wersję. Stała ze startera jest używana, nie własne parametry; test `QueryScopeIndicesTest` pokrywa odpowiedź z samymi `p-2026.xx`.
+- Reguła wyłączająca `aggregate_logs` w paczce polityk zostaje do sygnału koordynatora.
+
+## Propozycje CC
+
+Brak.
+
+
 M3: osiągnięty (2026-10-28) - serwer na starterze 3.0.0-beta-3 (kontrakty 3.1.0): `@ToolTitle`, zamknięte schematy, `policy.*` i `manifest.*`, `GET /mcp-manifest` zgodny z `tools/list`; `@ResourceRef` + `OpenSearchIndexResolver` dla `OpenSearch::Index` (`name`, `tags` z konfiguracji); zakres z `QueryScope` (`opensearchIndexExpression()`, `nothingToQuery()` -> odmowa, `OPENSEARCH_SEARCH_PARAMETERS`); zapytania tylko z ustrukturyzowanych filtrów (`text`, `level`, `service`); `ResultFilter` na trafieniach `search_logs`; `aggregate_logs` odmawia dla aliasów i liczy tylko indeksy dopuszczone polityką; 107 testów, 0 błędów.
 
 ## M3: kamienie pośrednie

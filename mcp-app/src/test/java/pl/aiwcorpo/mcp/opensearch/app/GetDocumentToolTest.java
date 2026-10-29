@@ -47,6 +47,8 @@ class GetDocumentToolTest extends ServerTestSupport {
                     .doesNotContain("&lt;", "not-for-the-model", "_seq_no");
         }
         assertThat(BACKEND.authorizations()).containsExactly(PAT, PAT);
+        assertThat(BACKEND.requests().get(0).decodedPath())
+                .isEqualTo("/_resolve/index/logs-team-a,logs-team-a-*,logs-team-b,logs-team-b-*");
         StubBackend.Request read = BACKEND.requests().get(1);
         assertThat(read.path()).isEqualTo("/logs-team-a-2026.10.27/_doc/" + DOC_ID);
         assertThat(read.query()).isEqualTo("_source_includes=%40timestamp%2Cmessage%2Clog.level%2Cservice.name%2Chost.name");
@@ -94,46 +96,43 @@ class GetDocumentToolTest extends ServerTestSupport {
     }
 
     @Test
-    void anAliasIsReadThroughItsSingleConcreteIndex() {
-        try (McpSyncClient client = clientWithCredential(PAT)) {
-            McpSchema.CallToolResult result = call(client, "get_document", Map.of("index", "logs-team-b-all", "id", DOC_ID));
-
-            assertThat(result.isError()).as(text(result)).isFalse();
-        }
-        assertThat(BACKEND.requests().stream().map(StubBackend.Request::path)).containsExactly(
-                "/_resolve/index/logs-team-b-all", "/_resolve/index/logs-team-a-2026.10.27", "/_alias/logs-team-b-all",
-                "/logs-team-a-2026.10.27/_doc/" + DOC_ID);
-    }
-
-    @Test
-    void anAliasWithAFilterOrRoutingIsNotRead() {
-        try (McpSyncClient client = clientWithCredential(PAT)) {
-            McpSchema.CallToolResult result = call(client, "get_document", Map.of("index", "logs-team-b-filtered", "id", DOC_ID));
-
-            assertThat(text(result)).contains("\"error\":\"not_found_or_denied\"");
-        }
-        assertThat(BACKEND.requests()).noneMatch(r -> r.path().contains("/_doc/"));
-    }
-
-    @Test
-    void anAliasWithOnlyARoutingIsNotRead() {
-        try (McpSyncClient client = clientWithCredential(PAT)) {
-            for (String alias : new String[] {"logs-team-b-routed-index", "logs-team-b-routed-search"}) {
-                assertThat(text(call(client, "get_document", Map.of("index", alias, "id", DOC_ID))))
-                        .as(alias).contains("\"error\":\"not_found_or_denied\"");
-            }
-        }
-        assertThat(BACKEND.requests()).noneMatch(r -> r.path().contains("/_doc/"));
-    }
-
-    @Test
-    void anAliasOfSeveralIndicesOrADataStreamIsNotFoundOrDenied() {
+    void anAliasIsNotFoundOrDeniedWhateverItPointsAt() {
         try (McpSyncClient client = clientWithCredential(PAT)) {
             String missing = text(call(client, "get_document", Map.of("index", "logs-team-a-missing", "id", DOC_ID)));
-            assertThat(text(call(client, "get_document", Map.of("index", "logs-team-b-two", "id", DOC_ID)))).isEqualTo(missing);
+            for (String alias : new String[] {"logs-team-b-all", "logs-team-a-all", "logs-team-b-filtered", "logs-team-b-routed-index",
+                    "logs-team-b-routed-search", "logs-team-b-two", "logs-team-b-leak", "logs-team-b-hidden-target"}) {
+                assertThat(text(call(client, "get_document", Map.of("index", alias, "id", DOC_ID)))).as(alias).isEqualTo(missing);
+            }
+            assertThat(missing).contains("\"error\":\"not_found_or_denied\"");
+        }
+        assertThat(BACKEND.requests()).noneMatch(r -> r.path().contains("/_doc/"));
+    }
+
+    @Test
+    void aDataStreamIsNotFoundOrDenied() {
+        try (McpSyncClient client = clientWithCredential(PAT)) {
+            String missing = text(call(client, "get_document", Map.of("index", "logs-team-a-missing", "id", DOC_ID)));
             assertThat(text(call(client, "get_document", Map.of("index", "logs-team-b-stream", "id", DOC_ID)))).isEqualTo(missing);
         }
         assertThat(BACKEND.requests()).noneMatch(r -> r.path().contains("/_doc/"));
+    }
+
+    @Test
+    void aHiddenIndexNamedLikeAGrantedPrefixIsNotRead() {
+        try (McpSyncClient client = clientWithCredential(PAT)) {
+            String missing = text(call(client, "get_document", Map.of("index", "logs-team-a-missing", "id", DOC_ID)));
+            assertThat(text(call(client, "get_document", Map.of("index", "logs-team-b", "id", DOC_ID)))).isEqualTo(missing);
+        }
+        assertThat(BACKEND.requests()).noneMatch(r -> r.path().contains("/_doc/"));
+    }
+
+    @Test
+    void anEmptyClusterIsNotFoundOrDenied() {
+        try (McpSyncClient client = clientWithCredential(StubBackend.EMPTY_CLUSTER_CREDENTIAL)) {
+            assertThat(text(call(client, "get_document", Map.of("index", "logs-team-a-2026.10.27", "id", DOC_ID))))
+                    .contains("\"error\":\"not_found_or_denied\"");
+        }
+        assertThat(BACKEND.requests()).hasSize(1);
     }
 
     @Test
@@ -234,16 +233,6 @@ class GetDocumentToolTest extends ServerTestSupport {
         }
         assertThat(BACKEND.requests()).noneMatch(r -> r.decodedPath().startsWith("/secret-hr-1")
                 || r.decodedPath().startsWith("/logs-team-ab-1") || r.decodedPath().contains("/logs/"));
-    }
-
-    @Test
-    void anAliasToAHiddenIndexIsNotRead() {
-        try (McpSyncClient client = clientWithCredential(PAT)) {
-            McpSchema.CallToolResult result = call(client, "get_document", Map.of("index", "logs-team-b-hidden-target", "id", DOC_ID));
-
-            assertThat(text(result)).contains("\"error\":\"not_found_or_denied\"");
-        }
-        assertThat(BACKEND.requests()).noneMatch(r -> r.path().contains("/_doc/"));
     }
 
     @Test

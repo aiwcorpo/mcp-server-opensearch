@@ -13,7 +13,6 @@ import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.ssl.SslBundles;
 import org.springframework.core.env.Environment;
@@ -37,7 +36,6 @@ import pl.aiwcorpo.mcp.opensearch.core.domain.LogFilter;
 import pl.aiwcorpo.mcp.opensearch.core.domain.LogHit;
 import pl.aiwcorpo.mcp.opensearch.core.domain.LogQuery;
 import pl.aiwcorpo.mcp.opensearch.core.domain.NotFoundOrDeniedException;
-import pl.aiwcorpo.mcp.opensearch.core.domain.ResolvedIndices;
 import pl.aiwcorpo.mcp.opensearch.core.port.out.OpenSearchPort;
 import pl.aiwcorpo.mcp.platform.resource.QueryScope;
 import pl.aiwcorpo.mcp.platform.security.BackendCredential;
@@ -49,10 +47,10 @@ import pl.aiwcorpo.mcp.platform.security.CredentialRequiredException;
  * (C3), never with an account of the server. OpenSearch Security then applies the user's own index permissions
  * and DLS/FLS as a second layer behind the prefix checks of this server.
  *
- * <p>Only four endpoints are used: {@code GET _resolve/index/{expr}}, {@code GET _alias/{name}},
- * {@code POST {expr}/_search} with a body the server builds (a bool query of the model's values, and for
- * {@code aggregate_logs} one terms aggregation on a configured field), and {@code GET {index}/_doc/{id}}. No
- * {@code _msearch}, {@code _mget}, scripts, {@code _count} or {@code ?q=}. 404 and 403 both become "not visible"
+ * <p>Only three endpoints are used: {@code GET _resolve/index/{expr}} (the scope of the caller, never an
+ * argument of the model), {@code POST {names}/_search} with a body the server builds (a bool query of the model's
+ * values, and for {@code aggregate_logs} one terms aggregation on a configured field) on a list of concrete index
+ * names, and {@code GET {index}/_doc/{id}}. No {@code _msearch}, {@code _mget}, scripts, {@code _count} or {@code ?q=}. 404 and 403 both become "not visible"
  * ({@code not_found_or_denied}), 401 means the stored credential no longer works
  * ({@code credential_required}). A failed call becomes an exception with the status alone, an unusable answer
  * (redirect, unparsable or oversized body) a {@link BackendResponseException}, so no response body reaches a
@@ -73,10 +71,17 @@ public class OpenSearchAdapter implements OpenSearchPort {
      * owns the list ({@link QueryScope#OPENSEARCH_SEARCH_PARAMETERS}) and every request that carries an index
      * expression sends all of it.
      */
+    private static final String RESOLVE_OPTIONS = QueryScope.OPENSEARCH_RESOLVE_PARAMETERS.entrySet().stream()
+            .sorted(Map.Entry.comparingByKey())
+            .map(parameter -> parameter.getKey() + "=" + parameter.getValue())
+            .collect(Collectors.joining("&"));
+
     private static final String INDICES_OPTIONS = QueryScope.OPENSEARCH_SEARCH_PARAMETERS.entrySet().stream()
             .sorted(Map.Entry.comparingByKey())
             .map(parameter -> parameter.getKey() + "=" + parameter.getValue())
             .collect(Collectors.joining("&"));
+
+    private static final tools.jackson.databind.json.JsonMapper JSON = tools.jackson.databind.json.JsonMapper.builder().build();
 
     private final RestClient client;
     private final OpenSearchSearchProperties search;
@@ -106,41 +111,23 @@ public class OpenSearchAdapter implements OpenSearchPort {
     }
 
     @Override
-    public Optional<ResolvedIndices> resolve(String expression) {
+    public String resolveIndexResponse(String expression) {
         BackendCredential credential = credential();
-        ResolveResponse response;
         try {
-            response = client.get()
-                    .uri("/_resolve/index/{expression}?" + INDICES_OPTIONS, expression)
+            String response = client.get()
+                    .uri("/_resolve/index/{expression}?" + RESOLVE_OPTIONS, expression)
                     .headers(credential::applyTo)
                     .retrieve()
-                    .body(ResolveResponse.class);
-        } catch (HttpClientErrorException.NotFound | HttpClientErrorException.Forbidden hidden) {
-            return Optional.empty();
-        } catch (HttpClientErrorException.Unauthorized expired) {
-            throw new CredentialRequiredException(SYSTEM);
-        } catch (RestClientResponseException | ResourceAccessException statusOrIo) {
-            throw statusOrIo;
-        } catch (RestClientException unreadable) {
-            throw new BackendResponseException("body not readable");
-        }
-        if (response == null) {
-            throw new BackendResponseException("empty body");
-        }
-        return Optional.of(response.toDomain());
-    }
-
-    @Override
-    public boolean aliasHasFilterOrRouting(String alias) {
-        BackendCredential credential = credential();
-        Map<String, AliasedIndex> response;
-        try {
-            response = client.get()
-                    .uri("/_alias/{alias}", alias)
-                    .headers(credential::applyTo)
-                    .retrieve()
-                    .body(new ParameterizedTypeReference<Map<String, AliasedIndex>>() { });
-        } catch (HttpClientErrorException.NotFound | HttpClientErrorException.Forbidden hidden) {
+                    .body(String.class);
+            if (response == null) {
+                throw new BackendResponseException("empty body");
+            }
+            requireIndexList(response);
+            return response;
+        } catch (HttpClientErrorException.NotFound noIndex) {
+            // None of the names exists, and for a name written as plain "p" that is the usual case (only p-2026.10 does).
+            return QueryScope.EMPTY_RESOLVE_RESPONSE;
+        } catch (HttpClientErrorException.Forbidden hidden) {
             throw new NotFoundOrDeniedException();
         } catch (HttpClientErrorException.Unauthorized expired) {
             throw new CredentialRequiredException(SYSTEM);
@@ -149,20 +136,27 @@ public class OpenSearchAdapter implements OpenSearchPort {
         } catch (RestClientException unreadable) {
             throw new BackendResponseException("body not readable");
         }
-        if (response == null || response.isEmpty()) {
-            throw new BackendResponseException("empty body");
+    }
+
+    /** The platform library reads the answer as JSON; an SSO page or a proxy error must not surface as invalid_argument. */
+    private static void requireIndexList(String response) {
+        try {
+            if (!JSON.readTree(response).path("indices").isArray()) {
+                throw new BackendResponseException("no indices list");
+            }
+        } catch (tools.jackson.core.JacksonException unreadable) {
+            throw new BackendResponseException("body not readable");
         }
-        return response.values().stream().anyMatch(index -> index.aliases() == null
-                || !index.aliases().containsKey(alias) || index.aliases().get(alias).restricts());
     }
 
     @Override
-    public List<LogHit> search(String expression, IndexScope scope, LogQuery query) {
+    public List<LogHit> search(List<String> indices, IndexScope scope, LogQuery query) {
         BackendCredential credential = credential();
         SearchResponse response;
         try {
             response = client.post()
-                    .uri("/{expression}/_search?" + INDICES_OPTIONS + "&allow_partial_search_results=false", expression)
+                    .uri("/{expression}/_search?" + INDICES_OPTIONS + "&allow_partial_search_results=false",
+                            String.join(",", indices))
                     .headers(credential::applyTo)
                     .contentType(MediaType.APPLICATION_JSON)
                     .body(searchBody(scope, query))
@@ -195,8 +189,8 @@ public class OpenSearchAdapter implements OpenSearchPort {
         BackendCredential credential = credential();
         AggregateResponse response;
         try {
-            // The names are written by the server from what _resolve returned (they match the contract's index name
-            // pattern, no comma or wildcard among them), joined with commas here.
+            // The names come from QueryScope.opensearchSearchTarget: each matches the contract's index name pattern,
+            // so none has a comma or a wildcard, and they are joined with commas here.
             response = client.post()
                     .uri("/{expression}/_search?" + INDICES_OPTIONS + "&allow_partial_search_results=false",
                             String.join(",", indices))
@@ -258,17 +252,15 @@ public class OpenSearchAdapter implements OpenSearchPort {
     }
 
     /**
-     * OpenSearch Security takes a user's own credential as {@code Bearer} (JWT, token exchange) or {@code Basic}.
-     * A service account would replace the user's DLS/FLS with the server's, and other schemes would only fail
-     * at OpenSearch, so both are refused here and the user is sent to the portal.
+     * OpenSearch Security takes the user's own token, exchanged by the broker, as {@code Bearer}. The token is
+     * used for the one request it arrived with and never kept, so it cannot outlive its {@code expiresAt}. Any other
+     * type or scheme would only fail at OpenSearch, or (a service account) replace the user's DLS/FLS with the
+     * server's, so it is refused here and the user is sent to the portal.
      */
     private static BackendCredential credential() {
         BackendCredential credential = CredentialContext.require(SYSTEM);
-        boolean userCredential = credential.type() == BackendCredential.Type.USER_SECRET
-                || credential.type() == BackendCredential.Type.TOKEN_EXCHANGE;
-        boolean scheme = credential.scheme() == BackendCredential.Scheme.BEARER
-                || credential.scheme() == BackendCredential.Scheme.BASIC;
-        if (!userCredential || !scheme) {
+        if (credential.type() != BackendCredential.Type.TOKEN_EXCHANGE
+                || credential.scheme() != BackendCredential.Scheme.BEARER) {
             log.warn("event=credential_unsupported type={} scheme={}", credential.type().wireName(),
                     credential.scheme().wireName());
             throw new CredentialRequiredException(SYSTEM);
@@ -417,50 +409,6 @@ public class OpenSearchAdapter implements OpenSearchPort {
         JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(http.build());
         factory.setReadTimeout(properties.readTimeout());
         return factory;
-    }
-
-    /** {@code GET _resolve/index}; unknown fields are dropped here and never reach the model. */
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    record ResolveResponse(List<ResolvedIndex> indices, List<ResolvedAlias> aliases,
-            @JsonProperty("data_streams") List<ResolvedDataStream> dataStreams) {
-
-        ResolvedIndices toDomain() {
-            return new ResolvedIndices(
-                    indices == null ? List.of() : indices.stream()
-                            .map(i -> new ResolvedIndices.Index(i.name(),
-                                    i.attributes() != null && i.attributes().contains("hidden")))
-                            .toList(),
-                    aliases == null ? List.of() : aliases.stream()
-                            .map(a -> new ResolvedIndices.Alias(a.name(), a.indices() == null ? List.of() : a.indices()))
-                            .toList(),
-                    dataStreams == null ? List.of() : dataStreams.stream().map(ResolvedDataStream::name).toList());
-        }
-    }
-
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    record ResolvedIndex(String name, List<String> attributes) {
-    }
-
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    record ResolvedAlias(String name, List<String> indices) {
-    }
-
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    record ResolvedDataStream(String name) {
-    }
-
-    /** {@code GET _alias/{name}}: per index, the alias with its optional filter and routing. */
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    record AliasedIndex(Map<String, AliasSettings> aliases) {
-    }
-
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    record AliasSettings(Map<String, Object> filter, @JsonProperty("index_routing") String indexRouting,
-            @JsonProperty("search_routing") String searchRouting) {
-
-        boolean restricts() {
-            return (filter != null && !filter.isEmpty()) || indexRouting != null || searchRouting != null;
-        }
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
