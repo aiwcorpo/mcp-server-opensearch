@@ -1,6 +1,6 @@
 # mcp-opensearch: serwer MCP platformy
 
-Serwer MCP dla systemu `opensearch`, zbudowany na `mcp-platform-starter` 3.0.0-beta-8 (Java 25, Spring Boot
+Serwer MCP dla systemu `opensearch`, zbudowany na `mcp-platform-starter` 3.0.0-beta-9 (Java 25, Spring Boot
 4.1.0, Spring AI 2.0.0, kontrakty `mcp-contracts` 4.1.0). Stoi wyłącznie za gateway'em platformy: przyjmuje
 ruch tylko po mTLS z wewnętrznym JWT gateway'a (C2), a do systemu docelowego woła z poświadczeniem
 użytkownika, które gateway dołącza do każdego żądania (C3). Bez poprawnego JWT odpowiada 401, nie ma trybu
