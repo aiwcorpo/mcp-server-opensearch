@@ -3,7 +3,9 @@
 # Merge request pipelines run code nobody has reviewed yet, so they get no secret and no Docker socket: the registry
 # credentials are CI/CD variables that must be marked Protected (and Masked), which GitLab withholds from pipelines on
 # unprotected branches, and ci/run.sh then reads the registry anonymously (MCP_MAVEN_REPOSITORY_URL is a plain variable).
-# The image job runs on the default branch only, on a runner tagged docker-socket that mounts /var/run/docker.sock.
+# The image job runs on the default branch only, on a runner tagged docker-socket that mounts /var/run/docker.sock. That
+# runner must be a protected runner (it then takes jobs of protected branches only), otherwise a merge request could
+# reach the socket.
 stages:
   - verify
   - image

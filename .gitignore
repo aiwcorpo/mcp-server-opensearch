@@ -16,3 +16,4 @@ target/
 !deploy/systemd/mcp-*.env.template
 # Logs
 *.log
+.m2/

@@ -111,6 +111,15 @@ class ManifestTest extends ServerTestSupport {
         }
     }
 
+    /** The version in the parent pom, which is what the manifest must carry (the surefire working directory is mcp-app). */
+    private static String projectVersion() throws java.io.IOException {
+        String pom = java.nio.file.Files.readString(java.nio.file.Path.of("..", "pom.xml"));
+        java.util.regex.Matcher version = java.util.regex.Pattern
+                .compile("<artifactId>mcp-opensearch-parent</artifactId>\\s*<version>([^<]+)</version>").matcher(pom);
+        assertThat(version.find()).as("version in the parent pom").isTrue();
+        return version.group(1);
+    }
+
     private static JsonNode withoutHash(JsonNode tools) {
         JsonNode copy = tools.deepCopy();
         copy.forEach(tool -> ((tools.jackson.databind.node.ObjectNode) tool).remove("definitionHash"));
@@ -122,8 +131,16 @@ class ManifestTest extends ServerTestSupport {
         JsonNode exported = JSON.readTree(ManifestExport.manifest());
         JsonNode served = manifest();
 
-        // definitionHash is left out: it covers the accepted credential types too, which tests set to one type.
-        assertThat(withoutHash(exported.get("tools"))).as("same definitions as tools/list").isEqualTo(withoutHash(served.get("tools")));
+        // The hash covers the accepted credential types. The tests run with the types they configure, the production
+        // configuration of a system may list others; the hashes are comparable only when the lists are equal.
+        boolean sameTypes = exported.at("/credential/acceptedTypes").equals(served.at("/credential/acceptedTypes"));
+        if (sameTypes) {
+            assertThat(exported.get("tools")).as("same definitions and definitionHash as tools/list").isEqualTo(served.get("tools"));
+        } else {
+            assertThat(withoutHash(exported.get("tools"))).as("same definitions as tools/list").isEqualTo(withoutHash(served.get("tools")));
+        }
+        // The served manifest carries the version the tests configure; the file of the build must carry the one of the project.
+        assertThat(exported.get("version").asString()).as("version in the build manifest").isEqualTo(projectVersion());
         assertThat(exported.get("resourceTypes")).isEqualTo(served.get("resourceTypes"));
         assertThat(exported.get("serverId")).isEqualTo(served.get("serverId"));
         assertThat(exported.at("/credential/acceptedTypes")).hasSize(1);

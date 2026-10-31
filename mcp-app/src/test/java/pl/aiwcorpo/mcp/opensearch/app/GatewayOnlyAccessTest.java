@@ -20,6 +20,10 @@ class GatewayOnlyAccessTest extends ServerTestSupport {
             {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_document",
             "arguments":{"index":"logs-team-a-2026.10.27","id":"Xk3n8ZIBdLrT0q1aHf2p"}}}""";
 
+    private static final String INITIALIZE = """
+            {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18",
+            "capabilities":{},"clientInfo":{"name":"claim-test","version":"1"}}}""";
+
     private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
 
     @BeforeEach
@@ -62,10 +66,13 @@ class GatewayOnlyAccessTest extends ServerTestSupport {
 
     @Test
     void aTokenWithTheClaimsOfTheRemovedVirtualServersIsRejected() throws Exception {
+        // Positive control: the same kind of token without the extra claim passes the guard, so the 401 is about the claim
+        // (the starter logs it as internal_jwt_rejected reason=invalid_claims).
+        assertThat(post(INITIALIZE, GATEWAY.user().mint().headers()).statusCode()).isEqualTo(200);
         for (String claim : new String[] {"vs", "vsc"}) {
-            TestGateway.Minted withClaim = GATEWAY.user().tool("get_document").extraClaim(claim, "abc-only").mint();
+            TestGateway.Minted withClaim = GATEWAY.user().extraClaim(claim, "abc-only").mint();
 
-            assertThat(post(GET_RECORD, withClaim.headers()).statusCode()).as(claim).isEqualTo(401);
+            assertThat(post(INITIALIZE, withClaim.headers()).statusCode()).as(claim).isEqualTo(401);
         }
         assertThat(BACKEND.authorizations()).isEmpty();
     }

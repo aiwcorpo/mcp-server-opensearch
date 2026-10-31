@@ -215,16 +215,19 @@ to cienkie nakładki, więc to samo działa lokalnie, w obrazie `maven:3.9.12-ec
 
 | Krok | Co robi |
 | --- | --- |
-| `ci/run.sh verify` (domyślny) | `hygiene`, `mvnw clean verify`, potem kontrola, że uruchomiono co najmniej jeden test (pominięte nie liczą się) i że serwer zapisał `mcp-app/target/mcp-manifest.json` |
+| `ci/run.sh verify` (domyślny) | `hygiene`, `mvnw clean verify`, potem kontrola, że każdy moduł z `CI_TEST_MODULES` uruchomił testy (pominięte nie liczą się) i że powstał `mcp-app/target/mcp-manifest.json` |
 | `ci/run.sh hygiene` | cudzysłowy, spacje i wielokropek spoza ASCII oraz ślady narzędzi w źródłach (perl czyta przez `<<>>`) |
-| `ci/run.sh image` | `docker build` jaru z `verify`; tylko gałąź `main`, wymaga demona Dockera |
+| `ci/run.sh image` | `docker build` jaru z `verify` jako `mcp-server-opensearch:<prefiks>-<sha7>` (prefiks z `CI_IMAGE_TAG_PREFIX`, domyślnie `m5`); tylko gałąź `main`, wymaga demona Dockera |
 
 Inny argument kończy się kodem 2. Merge request i pull request nie dostają sekretów ani gniazda Dockera: testy nie
 potrzebują kontenerów, a rejestr Maven z artefaktami platformy (`MCP_MAVEN_REPOSITORY_URL`, zwykła zmienna) jest wtedy
 czytany anonimowo (`.ci/settings-anonymous.xml`). Dane dostępu (`MCP_MAVEN_REPOSITORY_USER`, `_PASSWORD`; w GitLabie
 zmienne Protected i Masked, w Jenkinsie poświadczenie `mcp-maven-registry`) widzi tylko gałąź `main`, na której działa też
-krok `image` (runner z gniazdem Dockera). Rejestracja manifestu w gateway'u (`PUT` z certyfikatem
-`mcp-registry-ci-mcp-opensearch`) jest osobnym krokiem pipeline'u serwera, bo wymaga sekretu, którego repo nie zawiera.
+krok `image` (runner z gniazdem Dockera; w GitLabie tag `docker-socket` musi należeć do runnera chronionego (protected),
+inaczej gniazdo trafiłoby w ręce merge requestu; w GitHubie sekrety są w Environment `ci-main`). Moduły z wymaganymi
+testami: `CI_TEST_MODULES` (domyślnie `mcp-application mcp-integration mcp-tools mcp-app`), dolna granica dla `mcp-app`: `CI_APP_MIN_TESTS` (20).
+Rejestracja manifestu w gateway'u (`PUT` z certyfikatem `mcp-registry-ci-mcp-opensearch`) jest osobnym krokiem pipeline'u
+serwera, bo wymaga sekretu, którego repo nie zawiera.
 
 ## Uruchomienie lokalne bez środowiska
 
