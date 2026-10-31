@@ -20,7 +20,6 @@ class ResourcePolicyTest extends ServerTestSupport {
     private static final String PAT = "Bearer opensearch-token-of-jkowalski-5c1e";
     private static final String DOC_ID = "Xk3n8ZIBdLrT0q1aHf2p";
     private static final String NOT_FOUND_OR_DENIED = "\"error\":\"not_found_or_denied\"";
-    private static final String LINK_KEY = "opensearchIndexPrefixes";
 
     @BeforeEach
     void resetBackend() {
@@ -119,30 +118,6 @@ class ResourcePolicyTest extends ServerTestSupport {
         assertThat(search.body()).contains("{\"term\":{\"_index\":\"logs-team-a\"}}", "{\"prefix\":{\"_index\":\"logs-team-a-\"}}")
                 .doesNotContain("logs-team-b");
         assertThat(BACKEND.requests()).noneMatch(r -> r.decodedPath().contains("logs-team-b"));
-    }
-
-    @Test
-    void aLinkNarrowsTheGrantsAndAnEmptyIntersectionRefuses() {
-        try (McpSyncClient client = clientAs(user -> {
-            reader(user);
-            user.virtualServer("team-b-only", Map.of(LINK_KEY, List.of("logs-team-b")));
-        }, PAT, CREDENTIAL_TYPE)) {
-            String expected = missing(client);
-            assertThat(text(call(client, "search_logs", search("logs-team-a")))).contains("\"hits\":[]");
-            assertThat(text(call(client, "get_document", Map.of("index", "logs-team-a-2026.10.27", "id", DOC_ID)))).isEqualTo(expected);
-            assertThat(call(client, "get_document", Map.of("index", "logs-team-b-1", "id", DOC_ID)).isError()).isFalse();
-            assertThat(call(client, "search_logs", search("logs-team-b-1")).isError()).isFalse();
-        }
-        assertThat(BACKEND.requests()).noneMatch(r -> r.decodedPath().contains("logs-team-a-2026"));
-
-        BACKEND.reset();
-        try (McpSyncClient client = clientAs(user -> {
-            user.username("jkowalski").groups(List.of(READ_GROUP, GRANT_TEAM_A));
-            user.virtualServer("team-b-only", Map.of(LINK_KEY, List.of("logs-team-b")));
-        }, PAT, CREDENTIAL_TYPE)) {
-            assertThat(text(call(client, "search_logs", search("logs-team-a")))).contains("\"hits\":[]");
-        }
-        assertThat(BACKEND.requests()).as("the link and the grants do not meet: no query").isEmpty();
     }
 
     @Test

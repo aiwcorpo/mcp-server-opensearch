@@ -61,6 +61,16 @@ class GatewayOnlyAccessTest extends ServerTestSupport {
     }
 
     @Test
+    void aTokenWithTheClaimsOfTheRemovedVirtualServersIsRejected() throws Exception {
+        for (String claim : new String[] {"vs", "vsc"}) {
+            TestGateway.Minted withClaim = GATEWAY.user().tool("get_document").extraClaim(claim, "abc-only").mint();
+
+            assertThat(post(GET_RECORD, withClaim.headers()).statusCode()).as(claim).isEqualTo(401);
+        }
+        assertThat(BACKEND.authorizations()).isEmpty();
+    }
+
+    @Test
     void onlyTheHealthEndpointAnswersWithoutJwt() throws Exception {
         assertThat(get("/actuator/health").statusCode()).isEqualTo(200);
         assertThat(get("/actuator/prometheus").statusCode()).isEqualTo(401);

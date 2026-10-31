@@ -17,7 +17,7 @@ Błędy (C10):
 | Sytuacja | Kod |
 | --- | --- |
 | zły argument (naruszenie schematu sprawdza starter, resztę narzędzie): prefiks z `,` `:` `<` `-` `_all` `*` `.`, nadmiarowy argument, ponad 100 indeksów po filtrze daty | `invalid_argument` (bez nazwy i wartości argumentu) |
-| `get_document`: brak grantów (`QueryScope.nothingToQuery()`), indeks lub dokument nie istnieje, nazwa poza grantami, linkiem albo prefiksami serwera, indeks z tagiem `restricted`, 403 OpenSearch, alias, data stream, indeks ukryty | `not_found_or_denied` (ten sam tekst) |
+| `get_document`: brak grantów (`QueryScope.nothingToQuery()`), indeks lub dokument nie istnieje, nazwa poza grantami albo prefiksami serwera, indeks z tagiem `restricted`, 403 OpenSearch, alias, data stream, indeks ukryty | `not_found_or_denied` (ten sam tekst) |
 | brak grupy `mcp-opensearch-read` | `access_denied` |
 | brak poświadczenia, 401 OpenSearch, schemat inny niż `Bearer` | `credential_required` |
 | typ poświadczenia spoza `[token-exchange]` (`X-MCP-Credential-Type`) | `internal_error` |

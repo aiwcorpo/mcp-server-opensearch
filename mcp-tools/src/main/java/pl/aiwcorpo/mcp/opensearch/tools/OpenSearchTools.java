@@ -99,7 +99,7 @@ public class OpenSearchTools {
 
     /**
      * The prefix is an argument and not a {@code @ResourceRef}: it names a set of indices, not one. A caller whose
-     * grants or link exclude it gets the same empty result as for a prefix with no index. The scope comes from
+     * grants exclude it gets the same empty result as for a prefix with no index. The scope comes from
      * {@code QueryScope}; what the policy refuses in a hit is removed afterwards.
      */
     @Tool(name = SEARCH_LOGS, description = "Searches log documents in the indices of one"

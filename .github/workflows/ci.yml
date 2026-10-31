@@ -1,0 +1,53 @@
+# Thin wrapper: all logic is in ci/run.sh.
+# A pull request runs unreviewed code: its job holds no secret (MCP_MAVEN_REPOSITORY_URL is a repository variable, not a
+# secret, and the registry is read anonymously) and mounts no Docker socket. The main branch gets the registry
+# credentials (secrets MCP_MAVEN_REPOSITORY_USER and MCP_MAVEN_REPOSITORY_PASSWORD) and builds the image on the runner.
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  verify-pull-request:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    container:
+      image: maven:3.9.12-eclipse-temurin-25
+    env:
+      MCP_MAVEN_REPOSITORY_URL: ${{ vars.MCP_MAVEN_REPOSITORY_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - run: ci/run.sh verify
+  verify-main:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    container:
+      image: maven:3.9.12-eclipse-temurin-25
+    env:
+      MCP_MAVEN_REPOSITORY_URL: ${{ vars.MCP_MAVEN_REPOSITORY_URL }}
+      MCP_MAVEN_REPOSITORY_USER: ${{ secrets.MCP_MAVEN_REPOSITORY_USER }}
+      MCP_MAVEN_REPOSITORY_PASSWORD: ${{ secrets.MCP_MAVEN_REPOSITORY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - run: ci/run.sh verify
+      - uses: actions/upload-artifact@v4
+        with:
+          name: build
+          path: |
+            mcp-app/target/mcp-*.jar
+            mcp-app/target/mcp-manifest.json
+  image:
+    needs: verify-main
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: build
+          path: mcp-app/target
+      - run: ci/run.sh image

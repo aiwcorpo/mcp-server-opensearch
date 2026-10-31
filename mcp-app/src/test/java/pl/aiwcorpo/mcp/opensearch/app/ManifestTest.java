@@ -111,15 +111,24 @@ class ManifestTest extends ServerTestSupport {
         }
     }
 
-    @Test
-    void theBuildArtifactIsTheManifestTheServerPublishesAndAcceptsOnlyTokenExchange() throws Exception {
-        JsonNode manifest = manifest();
-        JsonNode artifact = JSON.readTree(java.nio.file.Files.readString(java.nio.file.Path.of(MANIFEST_FILE)));
+    private static JsonNode withoutHash(JsonNode tools) {
+        JsonNode copy = tools.deepCopy();
+        copy.forEach(tool -> ((tools.jackson.databind.node.ObjectNode) tool).remove("definitionHash"));
+        return copy;
+    }
 
-        assertThat(artifact).isEqualTo(manifest);
-        assertThat(artifact.at("/credential/acceptedTypes")).hasSize(1);
-        assertThat(artifact.at("/credential/acceptedTypes/0").asString()).isEqualTo("token-exchange");
-        assertThat(artifact.has("environment")).as("only the devstack profile publishes environment=dev (CC-138)").isFalse();
+    @Test
+    void theBuildManifestHasTheToolsTheServerPublishesAndAcceptsOnlyTokenExchange() throws Exception {
+        JsonNode exported = JSON.readTree(ManifestExport.manifest());
+        JsonNode served = manifest();
+
+        // definitionHash is left out: it covers the accepted credential types too, which tests set to one type.
+        assertThat(withoutHash(exported.get("tools"))).as("same definitions as tools/list").isEqualTo(withoutHash(served.get("tools")));
+        assertThat(exported.get("resourceTypes")).isEqualTo(served.get("resourceTypes"));
+        assertThat(exported.get("serverId")).isEqualTo(served.get("serverId"));
+        assertThat(exported.at("/credential/acceptedTypes")).hasSize(1);
+        assertThat(exported.at("/credential/acceptedTypes/0").asString()).isEqualTo("token-exchange");
+        assertThat(exported.has("environment")).as("only the devstack profile publishes environment=dev (CC-138)").isFalse();
     }
 
     @Test

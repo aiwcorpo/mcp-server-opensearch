@@ -1,5 +1,7 @@
 # STATUS - mcp-server-opensearch (ws-04)
 
+M5: kod gotowy (2026-10-31)
+
 M4: osiągnięty (2026-10-29) - serwer na starterze 3.0.0-beta-9 (kontrakty 4.1.0): `accepted-credential-types: [token-exchange]` (adapter przyjmuje tylko `token-exchange` + `Bearer`, token używany w jednym żądaniu, bez cache), CC-160 (do OpenSearch idzie tylko `GET _resolve/index` z wyrażeniem zakresu, wyszukiwanie i agregacje na liście nazw z `opensearchSearchTarget`, bez aliasów i strumieni, `get_document` przez `resolveIndexArgument`; `index_prefix` (dawniej `index_pattern`) to prefiks `OpenSearchIndexPrefix` bez obejścia; `requireNoAliases` usunięte), `aggregate_logs` działa na konkretnych indeksach i nie liczy aliasów, stały tekst `not_found_or_denied`, manifest jako artefakt budowy `mcp-app/target/mcp-manifest.json`, README z licznikiem `mcp_audit_authentication_suppressed_total`; wybór indeksów po dacie w nazwie względem `from`-`to`; 124 testów (mcp-application 18, mcp-integration 18, mcp-tools 3, mcp-app 85 + 7 w wykonaniu `manifest-artifact`), 0 błędów.
 
 ## M4: kamienie pośrednie
@@ -279,3 +281,23 @@ BOM alpha-10 -> alpha-11 (MIGRATION-3.0.md, sekcja "Zmiany w 3.0.0-alpha-11"). `
 ## Starter 3.0.0-beta-4
 
 Podbicie BOM (MIGRATION "Z beta-3 na beta-4": profil `devstack` dla stosu dev w kontenerach, nic obowiązkowego dla serwera). Kod bez zmian.
+
+## M5: starter 3.0.0-beta-10, kontrakty 5.1.0 (2026-10-31)
+
+- `mcp-platform.version` 3.0.0-beta-10 (BOM przypina kontrakty 5.1.0); README poprawione (wersje, zakres bez linku, sekcja CI).
+- Usunięte: `GatewayLinkClaimsTest`, test `aLinkNarrowsTheGrantsAndAnEmptyIntersectionRefuses` i `LINK_KEY` w `ResourcePolicyTest`, dwa testy zawężenia
+  linkiem w `QueryScopeIndexScopeProviderTest`, trzeci argument `QueryConstraint` w testach, wzmianki o linku w javadocach i `docs/api/tools-catalog.md`.
+  W kodzie głównym nie było `linkIds()`, `linkType()`, `RecordingAuthorizer` ani `LINK_NARROWING_PREFIX`; zakres nadal pochodzi z grantów
+  (`QueryScope.opensearchIndexExpression()`), więc zakres wyszukiwania się nie poszerzył (testy `theQueryIsLimitedToTheGrantedPrefixes`,
+  `aPrefixNeverReachesItsNeighbour`, `QueryScopeIndexScopeProviderTest`).
+- `GatewayOnlyAccessTest.aTokenWithTheClaimsOfTheRemovedVirtualServersIsRejected`: `extraClaim("vs", ...)` i `extraClaim("vsc", ...)` -> 401, backend nietknięty.
+- Audyt: serwer nie ma własnych zdarzeń z `virtualServer` ani powodu `link_scope` (audyt robi starter); w `deploy/` i README brak alertów nad `link_scope`.
+- Manifest: `ManifestExport` (exec-maven-plugin w fazie `package`, `manifest.export.skip=false`) zapisuje `mcp-app/target/mcp-manifest.json` z `application.yml`
+  bez profilu, także przy `-DskipTests`; wykonanie surefire `manifest-artifact` i `manifest.output-file` w testach usunięte. `ManifestTest` porównuje
+  eksport z `tools/list`, `acceptedTypes` = `[token-exchange]`, brak `environment`.
+- CI: `ci/run.sh` (verify, hygiene, image), `Makefile`, `.gitlab-ci.yml`, `Jenkinsfile`, `.github/workflows/ci.yml`, `.ci/settings*.xml` z szablonu 444f826
+  (nazwa jaru `mcp-opensearch`). MR/PR bez sekretów i bez gniazda Dockera, 0 uruchomionych testów = błąd, nieznany krok = kod 2.
+- A10-M1: `DevProfileLoopbackTest` jak w szablonie (`assertDevProfileLoopbackRule` + `assertServerIsGuarded`), bez wycinania bramek i bez asercji zależnych od hosta.
+- Dowód: `ci/run.sh verify` na hoście: 121 przypadków, 0 pominiętych, 0 błędów; manifest zapisany (3 narzędzia).
+- Dowód w kontenerze: `mvnw -o clean verify` w `maven:3.9.12-eclipse-temurin-25` z `INVOCATION_ID` i `KUBERNETES_SERVICE_HOST`: 121 testów, 0 błędów
+  (w tym `DevProfileLoopbackTest`). To nie jest dowód z runnera CI; osiągnięcie M5 czeka na przebieg runnera.

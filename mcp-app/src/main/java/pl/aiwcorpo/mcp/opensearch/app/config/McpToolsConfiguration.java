@@ -17,7 +17,7 @@ import pl.aiwcorpo.mcp.platform.input.SchemaLimitedToolCallbacks;
 public class McpToolsConfiguration {
 
     @Bean
-    ToolCallbackProvider mcpTools(OpenSearchTools openSearchTools) {
+    public ToolCallbackProvider mcpTools(OpenSearchTools openSearchTools) {
         return SchemaLimitedToolCallbacks.of(openSearchTools);
     }
 }

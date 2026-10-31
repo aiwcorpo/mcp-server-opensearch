@@ -13,12 +13,12 @@ import pl.aiwcorpo.mcp.platform.resource.QueryScope;
 import pl.aiwcorpo.mcp.platform.resource.ResourcePolicy;
 
 /**
- * The scope of the current call: what the caller's {@code mcp-opensearch-idx-*} groups grant and the virtual server
- * link allows ({@link QueryScope}), within the prefixes this server is configured for. OpenSearch enforces the
- * user's rights on its own, but a grant is narrower than those, so the query is limited to it.
+ * The scope of the current call: what the caller's {@code mcp-opensearch-idx-*} groups grant ({@link QueryScope}),
+ * within the prefixes this server is configured for. OpenSearch enforces the user's rights on its own, but a grant
+ * is narrower than those, so the query is limited to it.
  *
- * <p>When nothing is both granted and linked the scope is empty and the service refuses; an empty index
- * expression would search every index, which is why {@link QueryScope#nothingToQuery()} is asked first.
+ * <p>When nothing is granted the scope is empty and the service refuses; an empty index expression would search
+ * every index, which is why {@link QueryScope#nothingToQuery()} is asked first.
  */
 @Component
 @EnableConfigurationProperties(IndexScopeProperties.class)

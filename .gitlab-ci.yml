@@ -1,0 +1,45 @@
+# Thin wrapper: all logic is in ci/run.sh, which also runs in a developer's shell.
+#
+# Merge request pipelines run code nobody has reviewed yet, so they get no secret and no Docker socket: the registry
+# credentials are CI/CD variables that must be marked Protected (and Masked), which GitLab withholds from pipelines on
+# unprotected branches, and ci/run.sh then reads the registry anonymously (MCP_MAVEN_REPOSITORY_URL is a plain variable).
+# The image job runs on the default branch only, on a runner tagged docker-socket that mounts /var/run/docker.sock.
+stages:
+  - verify
+  - image
+
+default:
+  image: maven:3.9.12-eclipse-temurin-25
+  cache:
+    key: maven
+    paths: [.m2/repository]
+
+variables:
+  MAVEN_OPTS: "-Dmaven.repo.local=$CI_PROJECT_DIR/.m2/repository"
+
+verify:
+  stage: verify
+  script:
+    - ci/run.sh verify
+  artifacts:
+    when: always
+    paths:
+      - mcp-app/target/mcp-*.jar
+      - mcp-app/target/mcp-manifest.json
+    reports:
+      junit: "**/target/surefire-reports/TEST-*.xml"
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+image:
+  stage: image
+  image: docker:27-cli
+  tags: [docker-socket]
+  needs: [verify]
+  before_script:
+    - apk add --no-cache bash git
+  script:
+    - ci/run.sh image
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH

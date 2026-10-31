@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Maven settings for CI without credentials (merge requests, pull requests): the same registry as settings.xml, read
+  anonymously. A pipeline that runs code of a merge request must not hold a secret, so this file has no server entry;
+  the registry URL (not a secret) must allow anonymous reads of the platform artifacts, or the artifacts must already
+  be in the local repository of the runner.
+-->
+<settings xmlns="http://maven.apache.org/SETTINGS/1.2.0"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.2.0 https://maven.apache.org/xsd/settings-1.2.0.xsd">
+    <profiles>
+        <profile>
+            <id>mcp-artifacts</id>
+            <repositories>
+                <repository>
+                    <id>mcp-artifacts</id>
+                    <url>${env.MCP_MAVEN_REPOSITORY_URL}</url>
+                    <releases><enabled>true</enabled></releases>
+                    <snapshots><enabled>false</enabled></snapshots>
+                </repository>
+            </repositories>
+        </profile>
+    </profiles>
+    <activeProfiles>
+        <activeProfile>mcp-artifacts</activeProfile>
+    </activeProfiles>
+</settings>

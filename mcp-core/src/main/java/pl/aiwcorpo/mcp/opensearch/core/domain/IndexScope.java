@@ -7,9 +7,9 @@ import java.util.List;
  * index named {@code p-...}, never {@code p...} without the dash: {@code logs-team-a} does not cover
  * {@code logs-team-ab} (the same rule as {@code OpenSearchIndexPrefix} in mcp-contracts and the Cedar scopes).
  *
- * <p>The prefixes are the grants of the caller's groups, narrowed by the virtual server link, within the prefixes
- * the server is configured for ({@code IndexScopeProvider}). No prefix at all is an empty scope that covers nothing:
- * it never stands for "every index".
+ * <p>The prefixes are the grants of the caller's groups, within the prefixes the server is configured for
+ * ({@code IndexScopeProvider}). No prefix at all is an empty scope that covers nothing: it never stands for
+ * "every index".
  */
 public record IndexScope(List<String> prefixes) {
 

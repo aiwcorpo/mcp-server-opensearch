@@ -1,7 +1,7 @@
 # mcp-opensearch: serwer MCP platformy
 
-Serwer MCP dla systemu `opensearch`, zbudowany na `mcp-platform-starter` 3.0.0-beta-9 (Java 25, Spring Boot
-4.1.0, Spring AI 2.0.0, kontrakty `mcp-contracts` 4.1.0). Stoi wyłącznie za gateway'em platformy: przyjmuje
+Serwer MCP dla systemu `opensearch`, zbudowany na `mcp-platform-starter` 3.0.0-beta-10 (Java 25, Spring Boot
+4.1.0, Spring AI 2.0.0, kontrakty `mcp-contracts` 5.1.0). Stoi wyłącznie za gateway'em platformy: przyjmuje
 ruch tylko po mTLS z wewnętrznym JWT gateway'a (C2), a do systemu docelowego woła z poświadczeniem
 użytkownika, które gateway dołącza do każdego żądania (C3). Bez poprawnego JWT odpowiada 401, nie ma trybu
 anonimowego.
@@ -48,7 +48,7 @@ Nazwy widziane przez klienta: `opensearch__search_logs`, `opensearch__aggregate_
 na polu z konfiguracji buduje serwer. Wynik `search_logs` i `get_document` nie przekracza 1 MB (budżet 900000 B
 szacowanego JSON, po przekroczeniu `truncated: true`).
 Błędy narzędzi: `not_found_or_denied` (`get_document`: brak indeksu lub dokumentu, 403 z OpenSearch, brak grantów, indeks poza
-grantami albo linkiem, indeks z tagiem `restricted`, alias, data stream, indeks ukryty; treść to stała platformy),
+grantami, indeks z tagiem `restricted`, alias, data stream, indeks ukryty; treść to stała platformy),
 `access_denied` (brak grupy `mcp-opensearch-read`), `credential_required` (brak poświadczenia, 401 z OpenSearch,
 schemat inny niż `Bearer`), `invalid_argument` (zły argument; prefiks obejmujący więcej niż 100 indeksów),
 `upstream_unavailable`, `internal_error` (także typ poświadczenia spoza `[token-exchange]`). Brak grantów, prefiks bez
@@ -63,11 +63,10 @@ wszystkich tych przyczyn. Szczegóły: `docs/api/tools-catalog.md`.
 - `tags` (atrybut obowiązkowy) pochodzą z konfiguracji, bo OpenSearch nie ma tagów: `opensearch.scope.index-tags`
   (lista `{prefix, tags}`; prefiks obejmuje `p` i `p-...`; w środowisku `OPENSEARCH_SCOPE_INDEXTAGS_0_PREFIX`,
   `OPENSEARCH_SCOPE_INDEXTAGS_0_TAGS_0`). Indeks bez reguły ma `tags: []`. Paczka polityk zabrania `restricted`.
-- Zakres wyszukiwania z `QueryScope`: grupy `mcp-opensearch-idx-<prefiks>` (mapowanie w paczce) przecięte z linkiem
-  wirtualnego serwera (`opensearchIndexPrefixes`) i z `MCP_OPENSEARCH_INDEX_PREFIXES`. Kolejne `p` dają wyrażenie
+- Zakres wyszukiwania z `QueryScope`: grupy `mcp-opensearch-idx-<prefiks>` (mapowanie w paczce) przecięte z `MCP_OPENSEARCH_INDEX_PREFIXES`. Kolejne `p` dają wyrażenie
   `p,p-*` (nigdy `p*`: `payments-old` nie wchodzi do zakresu `p`). To wyrażenie jest jedynym wzorcem, jaki serwer
-  wysyła do OpenSearch, i tylko do `GET _resolve/index`. Gdy `QueryScope.nothingToQuery()` (brak grantów albo link i
-  granty się nie spotykają), `search_logs` i `aggregate_logs` zwracają pusty wynik bez żadnego zapytania, a
+  wysyła do OpenSearch, i tylko do `GET _resolve/index`. Gdy `QueryScope.nothingToQuery()` (brak grantów w prefiksach
+  serwera), `search_logs` i `aggregate_logs` zwracają pusty wynik bez żadnego zapytania, a
   `get_document` `not_found_or_denied`: puste wyrażenie indeksów oznaczałoby wszystkie indeksy.
 - `search_logs`: `LogHitView.index` to `@ResourceRef`, więc starter po wykonaniu usuwa trafienia z indeksów, których
   polityka nie dopuszcza (np. tag `restricted`). Wynik nie ma liczników (`returned`, `total`).
@@ -159,13 +158,11 @@ odpowiedzi systemu do żadnego komunikatu ani logu.
 
 ## Rejestracja, tryb dev i metryki (M4)
 
-- Manifest do rejestracji w gateway'u powstaje w buildzie: testy uruchamiają serwer z
-  `aiwcorpo.mcp.platform.manifest.output-file=target/mcp-manifest.json`, więc `./mvnw verify` zostawia
-  `mcp-app/target/mcp-manifest.json` z przeglądanego commitu. CI rejestruje ten plik certyfikatem
+- Manifest do rejestracji w gateway'u powstaje w buildzie: `ManifestExport` (exec-maven-plugin, faza `package`,
+  `manifest.export.skip=false` w `mcp-app/pom.xml`) buduje go z `application.yml` bez profilu i zapisuje
+  `mcp-app/target/mcp-manifest.json` z przeglądanego commitu, także przy `-DskipTests`. CI rejestruje ten plik certyfikatem
   `mcp-registry-ci-mcp-opensearch`, nigdy odpowiedzi działającego serwera. `acceptedTypes` to `["token-exchange"]`, ustalone na stałe w `application.yml`; `CredentialTypeGuard` nie pozwala wystartować z inną wartością (także ustawioną ze środowiska).
-  Plik powstaje także przy `./mvnw clean package -DskipTests`: osobne wykonanie surefire `manifest-artifact` uruchamia `ManifestTest`
-  z `skipTests=false` ustawionym w POM, więc CI bierze `mcp-app/target/mcp-manifest.json` z dowolnego buildu poza
-  `-Dmaven.test.skip=true` (ten nie kompiluje testów i nie jest wspierany).
+  `ManifestTest` porównuje narzędzia tego pliku z `tools/list` działającego serwera.
 - Stos dev uruchamia ten sam obraz z `SPRING_PROFILES_ACTIVE=devstack` i dwiema zgodami (`MCP_DEVSTACK_ACKNOWLEDGED`
   w środowisku procesu oraz `AIWCORPO_MCP_PLATFORM_DEVSTACK_ACKNOWLEDGED`), a przy kluczach `dev-` także
   `AIWCORPO_MCP_PLATFORM_INTERNAL_JWT_ALLOW_TEST_KEYS` i `AIWCORPO_MCP_PLATFORM_POLICY_ALLOW_TEST_KEYS`. Manifest ma
@@ -210,6 +207,24 @@ https://mcp-opensearch.internal:8443/mcp`). Bez JWT odpowiada tylko `/actuator/h
 Serwer nie wstaje bez `MCP_GATEWAY_JWKS_URI`, `MCP_CONNECT_URL`, `MCP_OPENSEARCH_URL`,
 `MCP_OPENSEARCH_INDEX_PREFIXES`, paczki polityk (`MCP_POLICY_*`) i plików TLS. W `dev` paczka pochodzi z
 `http://127.0.0.1:18747/policies/main/latest.json` (klucz z `mcp-policies/keys/dev/`, ścieżka względem katalogu startu).
+
+## CI
+
+Cała logika jest w `ci/run.sh` (`make ci` woła `ci/run.sh verify`); `.gitlab-ci.yml`, `Jenkinsfile` i `.github/workflows/ci.yml`
+to cienkie nakładki, więc to samo działa lokalnie, w obrazie `maven:3.9.12-eclipse-temurin-25` i w każdym z trzech systemów.
+
+| Krok | Co robi |
+| --- | --- |
+| `ci/run.sh verify` (domyślny) | `hygiene`, `mvnw clean verify`, potem kontrola, że uruchomiono co najmniej jeden test (pominięte nie liczą się) i że serwer zapisał `mcp-app/target/mcp-manifest.json` |
+| `ci/run.sh hygiene` | cudzysłowy, spacje i wielokropek spoza ASCII oraz ślady narzędzi w źródłach (perl czyta przez `<<>>`) |
+| `ci/run.sh image` | `docker build` jaru z `verify`; tylko gałąź `main`, wymaga demona Dockera |
+
+Inny argument kończy się kodem 2. Merge request i pull request nie dostają sekretów ani gniazda Dockera: testy nie
+potrzebują kontenerów, a rejestr Maven z artefaktami platformy (`MCP_MAVEN_REPOSITORY_URL`, zwykła zmienna) jest wtedy
+czytany anonimowo (`.ci/settings-anonymous.xml`). Dane dostępu (`MCP_MAVEN_REPOSITORY_USER`, `_PASSWORD`; w GitLabie
+zmienne Protected i Masked, w Jenkinsie poświadczenie `mcp-maven-registry`) widzi tylko gałąź `main`, na której działa też
+krok `image` (runner z gniazdem Dockera). Rejestracja manifestu w gateway'u (`PUT` z certyfikatem
+`mcp-registry-ci-mcp-opensearch`) jest osobnym krokiem pipeline'u serwera, bo wymaga sekretu, którego repo nie zawiera.
 
 ## Uruchomienie lokalne bez środowiska
 
@@ -283,12 +298,12 @@ hosta (`mcp-gateway/scripts/run-dev-host.sh`, JWKS na `localhost:18445`) skonfig
 | --- | --- |
 | `SearchLogsToolTest` | `_search` idzie na listę nazw (ścieżka bez wzorca, bez aliasu, tagu `restricted` i sąsiada), jedyny wzorzec to wyrażenie zakresu w `_resolve/index`, które jest powtarzane i nie reużywane; token wymiany jako `Bearer` w każdym żądaniu; typ poświadczenia spoza `[token-exchange]` -> `internal_error` bez wywołania OpenSearch; schemat `ApiKey` i `Basic` -> `credential_required`; ciało `_search`; `UntrustedText` bez escapowania, tylko pola z konfiguracji; alias nazwany jak prefiks, alias prowadzący poza zakres, data stream i jego indeksy `.ds-`, indeks ukryty o nazwie prefiksu, indeks cudzy, brakujący, `restricted` -> ten sam pusty wynik; pusty klaster (404 resolve); wrogie wzorce (`*`, `_all`, przecinki, kropka, `p*`, `p-*`, wykluczenia, date math, zdalny klaster) -> `invalid_argument` przed OpenSearch; prefiks krótszy niż grant nie wychodzi poza zakres; naruszenia schematu, nazwa nieznanego argumentu z podrobioną linią JSON; nieczytelna odpowiedź resolve, przekierowanie, 500 bez treści w wyniku i logu |
 | `GetDocumentToolTest` | odczyt z C3, tylko pola z konfiguracji, `UntrustedText`; kodowanie `id` na drucie; każdy alias (jednego, wielu indeksów, z filtrem, z routingiem, poza zakres, do ukrytego), data stream, indeks ukryty o nazwie prefiksu i pusty klaster -> `not_found_or_denied` bez odczytu dokumentu; brak poświadczenia, 401; brakujący dokument = indeks bez uprawnień = brakujący = ukryty = indeks poza prefiksami; złe `index` i `id`; nieczytelna odpowiedź, przekierowanie, przekroczony czas, odpowiedź ponad limit |
-| `GatewayOnlyAccessTest` | bez JWT 401 (`tools/call`, `ping`, `initialize`), JWT dla innego serwera, innego narzędzia, wariant serwisowy i przeterminowany -> 401; bez JWT tylko health |
-| `ResourcePolicyTest` | indeks z tagiem `restricted`: `get_document` -> `not_found_or_denied`, wyszukiwanie -> pusty wynik jak dla brakującego; `access_denied` bez grupy odczytu (OpenSearch nietknięty); brak grantów -> pusty wynik albo `not_found_or_denied` bez żadnego zapytania; zapytanie ograniczone do przyznanego prefiksu; link zawężający i pusty przekrój linku z grantami; prefiks `logs-team-a` nie dochodzi do sąsiada `logs-team-ab` |
+| `GatewayOnlyAccessTest` | bez JWT 401 (`tools/call`, `ping`, `initialize`), JWT dla innego serwera, innego narzędzia, wariant serwisowy i przeterminowany -> 401; token z claimem `vs` albo `vsc` (usunięte linki) -> 401 bez dojścia do backendu; bez JWT tylko health |
+| `ResourcePolicyTest` | indeks z tagiem `restricted`: `get_document` -> `not_found_or_denied`, wyszukiwanie -> pusty wynik jak dla brakującego; `access_denied` bez grupy odczytu (OpenSearch nietknięty); brak grantów -> pusty wynik albo `not_found_or_denied` bez żadnego zapytania; zapytanie ograniczone do przyznanego prefiksu; prefiks `logs-team-a` nie dochodzi do sąsiada `logs-team-ab` |
 | `AggregateLogsToolTest` | liczy tylko konkretne indeksy dopuszczone polityką (ścieżka żądania z nazwami); aliasy (także o nazwie prefiksu, z filtrem, prowadzące poza zakres) i strumienie nie są liczone; prefiks poza zakresem albo `restricted` -> pusty wynik bez zapytania; wzorce i listy -> `invalid_argument`; schemat |
-| `ManifestTest` | `GET /mcp-manifest` zgodny z regułami gateway'a, definicje i `definitionHash` równe `tools/list`, `resourceRefs` tylko w `get_document`, tytuły, zamknięte schematy; plik `mcp-app/target/mcp-manifest.json` (artefakt budowy) równy manifestowi serwera, `acceptedTypes` = `[token-exchange]`, brak `environment` poza `devstack` |
+| `ManifestTest` | `GET /mcp-manifest` zgodny z regułami gateway'a, definicje i `definitionHash` równe `tools/list`, `resourceRefs` tylko w `get_document`, tytuły, zamknięte schematy; manifest z `ManifestExport` ma te same definicje co `tools/list`, `acceptedTypes` = `[token-exchange]`, brak `environment` poza `devstack` |
 | `QueryScopeIndicesTest` | nazwy z odpowiedzi resolve, w której są tylko indeksy `p-2026.xx` (brak indeksu `p`); alias, strumień, indeks ukryty, sąsiad i nazwa spoza `OpenSearchIndexName` pominięte; argument tylko z listy nazw; pusty zakres bez zapytania; brak cache |
-| `QueryScopeIndexScopeProviderTest` | granty `p` -> `p,p-*`, `payments-old` poza zakresem; pusty zakres; przecięcie z linkiem i z konfiguracją |
+| `QueryScopeIndexScopeProviderTest` | granty `p` -> `p,p-*`, `payments-old` poza zakresem; pusty zakres; przecięcie z konfiguracją |
 | `ProductionConfigurationTest`, `DevProfileLoopbackTest` | mTLS `need` poza `dev`; `https` poza `dev` (wyjątek: jawne `allow-plain-http`); adres bez userinfo, query i fragmentu; `dev` tylko na pętli zwrotnej |
 | `IndexDatesTest` | granice dat w nazwach (dzień, miesiąc, margines doby, przełom roku), nazwy bez daty i z datą nieistniejącą zawsze w zestawie |
 | `OpenSearchServiceTest` | prefiks wybiera `p` i `p-...` z listy nazw (nie sąsiada), polityka usuwa indeksy z zapytania i z liczników, pusta lista to pusty wynik bez wywołania, limit 100 nazw, trafienia i dokumenty spoza zakresu odrzucane, jedno rozwiązanie na trafienia jednego wyszukiwania (bez Springa) |

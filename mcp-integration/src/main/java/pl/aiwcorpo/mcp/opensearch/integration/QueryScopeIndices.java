@@ -22,7 +22,7 @@ import tools.jackson.databind.json.JsonMapper;
 /**
  * Concrete index names of the current call (CC-160). The only pattern the server sends to OpenSearch is the scope
  * expression of {@link QueryScope#opensearchIndexExpression()}, in {@code GET _resolve/index}; what the model
- * typed never reaches a path. From the answer {@link QueryScope} keeps the indices inside the grants and the link
+ * typed never reaches a path. From the answer {@link QueryScope} keeps the indices inside the grants
  * and drops aliases and data streams, and this class narrows that to the prefixes the server is configured for and
  * drops indices OpenSearch flags as hidden (an exact name, unlike a wildcard, can reach one).
  *

@@ -14,6 +14,9 @@
     </parent>
     <artifactId>mcp-app</artifactId>
     <name>mcp-opensearch :: App (bootstrap)</name>
+    <properties>
+        <manifest.export.skip>false</manifest.export.skip>
+    </properties>
     <dependencies>
         <dependency><groupId>${project.groupId}</groupId><artifactId>mcp-tools</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>${project.groupId}</groupId><artifactId>mcp-integration</artifactId><version>${project.version}</version></dependency>
@@ -35,26 +38,29 @@
         <finalName>mcp-opensearch</finalName>
         <plugins>
             <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-surefire-plugin</artifactId>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+            <!--
+              The manifest to register at the gateway: built from the reviewed commit and the production configuration,
+              in the ordinary build (also with -DskipTests), as target/mcp-manifest.json.
+            -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
                 <executions>
-                    <!-- The manifest the CI registers is written by this test (manifest.output-file). skipTests is set in the POM,
-                         which wins over -DskipTests, so a build that skips the other tests still produces target/mcp-manifest.json. -->
                     <execution>
-                        <id>manifest-artifact</id>
-                        <phase>test</phase>
-                        <goals><goal>test</goal></goals>
+                        <id>export-manifest</id>
+                        <phase>package</phase>
+                        <goals><goal>java</goal></goals>
                         <configuration>
-                            <skipTests>false</skipTests>
-                            <skip>false</skip>
-                            <test>ManifestTest</test>
+                            <skip>${manifest.export.skip}</skip>
+                            <mainClass>pl.aiwcorpo.mcp.opensearch.app.ManifestExport</mainClass>
+                            <arguments><argument>${project.build.directory}/mcp-manifest.json</argument></arguments>
+                            <classpathScope>runtime</classpathScope>
                         </configuration>
                     </execution>
                 </executions>
-            </plugin>
-            <plugin>
-                <groupId>org.springframework.boot</groupId>
-                <artifactId>spring-boot-maven-plugin</artifactId>
             </plugin>
         </plugins>
     </build>
