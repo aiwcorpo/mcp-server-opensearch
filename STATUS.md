@@ -301,3 +301,7 @@ Podbicie BOM (MIGRATION "Z beta-3 na beta-4": profil `devstack` dla stosu dev w 
 - Dowód: `ci/run.sh verify` na hoście: 121 przypadków, 0 pominiętych, 0 błędów; manifest zapisany (3 narzędzia).
 - Dowód w kontenerze: `mvnw -o clean verify` w `maven:3.9.12-eclipse-temurin-25` z `INVOCATION_ID` i `KUBERNETES_SERVICE_HOST`: 121 testów, 0 błędów
   (w tym `DevProfileLoopbackTest`). To nie jest dowód z runnera CI; osiągnięcie M5 czeka na przebieg runnera.
+
+Poprawki CI po przeglądzie szablonu 3df797e (2026-10-31): hygiene fail-closed, liczniki testów per moduł (CI_TEST_MODULES, CI_APP_MIN_TESTS),
+tag obrazu `mcp-server-opensearch:m5-<sha7>`, `ManifestTest` porównuje hash (gdy listy typów równe) i wersję z pom, test `vs`/`vsc` ma kontrolę pozytywną (powód w logu: invalid_claims).
+- Dowód: `ci/run.sh verify` 121 przypadków uruchomionych, `ci/run.sh bogus` daje 2, obraz `mcp-server-opensearch:m5-b9173cc` zbudowany z `ci/run.sh image`.
