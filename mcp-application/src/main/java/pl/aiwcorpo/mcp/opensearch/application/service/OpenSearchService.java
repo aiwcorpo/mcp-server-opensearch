@@ -7,11 +7,18 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Predicate;
+import org.jspecify.annotations.Nullable;
 import pl.aiwcorpo.mcp.opensearch.core.domain.AggregateQuery;
+import pl.aiwcorpo.mcp.opensearch.core.domain.ClusterHealth;
+import pl.aiwcorpo.mcp.opensearch.core.domain.IndexInfo;
+import pl.aiwcorpo.mcp.opensearch.core.domain.IndexMapping;
+import pl.aiwcorpo.mcp.opensearch.core.domain.IndexPage;
+import pl.aiwcorpo.mcp.opensearch.core.domain.LogCount;
+import pl.aiwcorpo.mcp.opensearch.core.domain.LogPage;
+import pl.aiwcorpo.mcp.opensearch.core.domain.QueryCheck;
 import pl.aiwcorpo.mcp.opensearch.core.domain.IndexDocument;
 import pl.aiwcorpo.mcp.opensearch.core.domain.IndexScope;
 import pl.aiwcorpo.mcp.opensearch.core.domain.LogBucket;
-import pl.aiwcorpo.mcp.opensearch.core.domain.LogHit;
 import pl.aiwcorpo.mcp.opensearch.core.domain.LogQuery;
 import pl.aiwcorpo.mcp.opensearch.core.domain.NotFoundOrDeniedException;
 import pl.aiwcorpo.mcp.opensearch.core.domain.ResolvedIndex;
@@ -55,15 +62,71 @@ public class OpenSearchService implements OpenSearchUseCase {
     }
 
     @Override
-    public List<LogHit> searchLogs(LogQuery query, Predicate<String> readable) {
+    public LogPage searchLogs(LogQuery query, Predicate<String> readable) {
         List<String> targets = targets(query.prefix(), query.from(), query.to(), readable);
         if (targets.isEmpty()) {
-            return List.of();
+            return LogPage.empty();
         }
         IndexScope scope = scopes.current();
-        return openSearch.search(targets, scope, query).stream()
-                .filter(hit -> scope.covers(hit.index()))
+        LogPage raw = openSearch.search(targets, scope, query);
+        return new LogPage(raw.hits().stream().filter(hit -> scope.covers(hit.index())).toList(), raw.next());
+    }
+
+    @Override
+    public LogCount countLogs(LogQuery query, Predicate<String> readable) {
+        List<String> targets = targets(query.prefix(), query.from(), query.to(), readable);
+        if (targets.isEmpty()) {
+            return new LogCount(0, true);
+        }
+        return openSearch.count(targets, scopes.current(), query);
+    }
+
+    @Override
+    public QueryCheck validateQuery(LogQuery query, Predicate<String> readable) {
+        List<String> targets = targets(query.prefix(), query.from(), query.to(), readable);
+        if (targets.isEmpty()) {
+            return new QueryCheck(true, 0, List.of(), pl.aiwcorpo.mcp.platform.text.UntrustedText.plain("", 0));
+        }
+        return openSearch.validate(targets, scopes.current(), query);
+    }
+
+    @Override
+    public IndexPage listIndices(String prefix, @Nullable String after, int limit, Predicate<String> readable) {
+        List<String> candidates = indices.names().stream()
+                .filter(name -> name.equals(prefix) || name.startsWith(prefix + "-"))
+                .filter(name -> after == null || name.compareTo(after) > 0)
+                .filter(readable)
+                .sorted()
                 .toList();
+        List<String> page = new java.util.ArrayList<>();
+        int pathChars = 0;
+        for (String name : candidates) {
+            int next = pathChars + name.length() + (page.isEmpty() ? 0 : 3);
+            if (page.size() >= limit || next > MAX_PATH_CHARS) {
+                break;
+            }
+            page.add(name);
+            pathChars = next;
+        }
+        if (page.isEmpty()) {
+            return new IndexPage(List.of(), null);
+        }
+        IndexScope scope = scopes.current();
+        List<IndexInfo> rows = openSearch.indexInfo(page).stream().filter(row -> scope.covers(row.name())).toList();
+        return new IndexPage(rows, page.size() < candidates.size() ? page.getLast() : null);
+    }
+
+    @Override
+    public IndexMapping getIndexMapping(String index) {
+        if (!scopes.current().covers(index)) {
+            throw new NotFoundOrDeniedException();
+        }
+        return openSearch.findMapping(index).orElseThrow(NotFoundOrDeniedException::new);
+    }
+
+    @Override
+    public ClusterHealth clusterHealth() {
+        return openSearch.clusterHealth();
     }
 
     @Override

@@ -31,6 +31,10 @@ aiwcorpo:
         jwks-uri: ${MCP_GATEWAY_JWKS_URI:}
       credential:
         connect-url: ${MCP_CONNECT_URL:}
+      # Key of the cursors of search_logs and list_indices (Base64, at least 32 bytes). Every instance must have the
+      # same one; without it each instance draws its own and a cursor from one is refused by the other.
+      paging:
+        cursor-key: ${MCP_CURSOR_KEY:}
       # The signed policy bundle (C7), the same one the gateway evaluates. The server does not start without a first
       # bundle, and state-dir keeps the last accepted revision across restarts so an older signed bundle is refused.
       policy:
@@ -57,6 +61,9 @@ opensearch:
     max-response-size: 1MB
     # Plain http outside 'dev' only for the mocks of mcp-platform-dev; never in a real deployment.
     allow-plain-http: ${MCP_OPENSEARCH_ALLOW_PLAIN_HTTP:false}
+    # Authorization header value for the version probe (GET /) and nothing else. Empty = anonymous probe; a cluster
+    # with the Security plugin then answers 401 and the server runs in degraded mode (get_backend_info).
+    probe-authorization: ${MCP_OPENSEARCH_PROBE_AUTHORIZATION:}
   # Index prefixes the server may touch at all (comma-separated). Each call is narrowed further to what the
   # caller's mcp-opensearch-idx-* groups grant (QueryScope); the server does not start without at least one.
   # Classification of indices for the policy (OpenSearch has no tags), e.g.
@@ -74,6 +81,9 @@ opensearch:
     service-field: ${MCP_OPENSEARCH_SERVICE_FIELD:service.name}
     host-field: ${MCP_OPENSEARCH_HOST_FIELD:host.name}
     max-range: ${MCP_OPENSEARCH_MAX_RANGE:7d}
+    # Field with a different value in every document (a keyword or a number), the last sort key of search_logs. Empty
+    # = no paging. Not _id: it has no doc values and is unique only within an index.
+    tiebreaker-field: ${MCP_OPENSEARCH_TIEBREAKER_FIELD:}
 
 management:
   endpoints:

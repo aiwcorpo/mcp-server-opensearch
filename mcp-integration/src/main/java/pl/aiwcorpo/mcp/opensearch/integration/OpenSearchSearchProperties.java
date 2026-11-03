@@ -15,10 +15,13 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * @param serviceField   keyword field the service filter and the service grouping use
  * @param hostField      keyword field the host grouping uses
  * @param maxRange       longest allowed {@code to - from}
+ * @param tiebreakerField keyword or numeric field with a different value in every document, the last sort key of
+ *                       {@code search_logs}; empty switches paging off. Not {@code _id}: it has no doc values and is
+ *                       unique only within an index
  */
 @ConfigurationProperties("opensearch.search")
 public record OpenSearchSearchProperties(String timestampField, List<String> queryFields, List<String> resultFields,
-        String levelField, String serviceField, String hostField, Duration maxRange) {
+        String levelField, String serviceField, String hostField, Duration maxRange, String tiebreakerField) {
 
     /** Plain field paths: no wildcards, so the configuration cannot widen the result to every field. */
     private static final Pattern FIELD = Pattern.compile("[A-Za-z0-9@_][A-Za-z0-9@_.-]{0,127}");
@@ -32,15 +35,27 @@ public record OpenSearchSearchProperties(String timestampField, List<String> que
         serviceField = serviceField == null || serviceField.isBlank() ? "service.name" : serviceField;
         hostField = hostField == null || hostField.isBlank() ? "host.name" : hostField;
         maxRange = maxRange == null ? Duration.ofDays(7) : maxRange;
+        tiebreakerField = tiebreakerField == null ? "" : tiebreakerField.strip();
         requireFields("timestamp-field", List.of(timestampField));
         requireFields("query-fields", queryFields);
         requireFields("result-fields", resultFields);
         requireFields("level-field", List.of(levelField));
         requireFields("service-field", List.of(serviceField));
         requireFields("host-field", List.of(hostField));
+        if (!tiebreakerField.isEmpty()) {
+            if (tiebreakerField.startsWith("_")) {
+                throw new IllegalStateException("opensearch.search.tiebreaker-field must be a field of the documents,"
+                        + " not a metadata field such as _id (no doc values, unique only within an index)");
+            }
+            requireFields("tiebreaker-field", List.of(tiebreakerField));
+        }
         if (maxRange.isNegative() || maxRange.isZero()) {
             throw new IllegalStateException("opensearch.search.max-range must be positive");
         }
+    }
+
+    public boolean pagingEnabled() {
+        return !tiebreakerField.isEmpty();
     }
 
     private static void requireFields(String property, List<String> fields) {
@@ -52,3 +67,4 @@ public record OpenSearchSearchProperties(String timestampField, List<String> que
         }
     }
 }
+

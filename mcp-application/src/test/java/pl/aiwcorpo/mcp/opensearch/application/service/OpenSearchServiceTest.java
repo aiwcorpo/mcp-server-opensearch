@@ -10,6 +10,15 @@ import java.util.Optional;
 import java.util.stream.IntStream;
 import org.junit.jupiter.api.Test;
 import pl.aiwcorpo.mcp.opensearch.core.domain.AggregateQuery;
+import pl.aiwcorpo.mcp.opensearch.core.domain.ClusterHealth;
+import pl.aiwcorpo.mcp.opensearch.core.domain.IndexInfo;
+import pl.aiwcorpo.mcp.opensearch.core.domain.IndexMapping;
+import pl.aiwcorpo.mcp.opensearch.core.domain.IndexPage;
+import pl.aiwcorpo.mcp.opensearch.core.domain.LogCount;
+import pl.aiwcorpo.mcp.opensearch.core.domain.LogPage;
+import pl.aiwcorpo.mcp.opensearch.core.domain.QueryCheck;
+import pl.aiwcorpo.mcp.opensearch.core.domain.SearchAfter;
+import pl.aiwcorpo.mcp.platform.text.UntrustedText;
 import pl.aiwcorpo.mcp.opensearch.core.domain.GroupBy;
 import pl.aiwcorpo.mcp.opensearch.core.domain.IndexDocument;
 import pl.aiwcorpo.mcp.opensearch.core.domain.IndexScope;
@@ -32,8 +41,12 @@ class OpenSearchServiceTest {
     private IndexScope scope = SCOPE;
     private List<LogHit> hits = List.of();
     private IndexDocument document;
+    private SearchAfter next;
+    private IndexMapping mapping;
     private final List<List<String>> searched = new ArrayList<>();
     private final List<List<String>> aggregated = new ArrayList<>();
+    private final List<List<String>> counted = new ArrayList<>();
+    private final List<List<String>> described = new ArrayList<>();
     private int resolutions;
 
     private final ScopedIndices indices = new ScopedIndices() {
@@ -56,9 +69,37 @@ class OpenSearchServiceTest {
         }
 
         @Override
-        public List<LogHit> search(List<String> targets, IndexScope scope, LogQuery query) {
+        public LogPage search(List<String> targets, IndexScope scope, LogQuery query) {
             searched.add(targets);
-            return hits;
+            return new LogPage(hits, next);
+        }
+
+        @Override
+        public LogCount count(List<String> targets, IndexScope scope, LogQuery query) {
+            counted.add(targets);
+            return new LogCount(42, true);
+        }
+
+        @Override
+        public QueryCheck validate(List<String> targets, IndexScope scope, LogQuery query) {
+            counted.add(targets);
+            return new QueryCheck(true, targets.size(), List.of(), UntrustedText.plain("+message:x", 10));
+        }
+
+        @Override
+        public List<IndexInfo> indexInfo(List<String> targets) {
+            described.add(targets);
+            return targets.stream().map(name -> new IndexInfo(name, "green", 1L, 2L)).toList();
+        }
+
+        @Override
+        public Optional<IndexMapping> findMapping(String index) {
+            return Optional.ofNullable(mapping);
+        }
+
+        @Override
+        public ClusterHealth clusterHealth() {
+            return new ClusterHealth("green", false, 3, 10, 0, 0, 0, 100);
         }
 
         @Override
@@ -116,7 +157,7 @@ class OpenSearchServiceTest {
     void nothingToQueryIsAnEmptyResultWithoutACallToOpenSearch() {
         names = List.of();
 
-        assertThat(service.searchLogs(query("logs-team-a"), index -> true)).isEmpty();
+        assertThat(service.searchLogs(query("logs-team-a"), index -> true).hits()).isEmpty();
         assertThat(service.aggregateLogs(aggregate("logs-team-a"), index -> true)).isEmpty();
         assertThat(searched).isEmpty();
         assertThat(aggregated).isEmpty();
@@ -124,8 +165,8 @@ class OpenSearchServiceTest {
 
     @Test
     void aPrefixWithNoReadableIndexIsAnEmptyResultLikeAnUnknownOne() {
-        assertThat(service.searchLogs(query("logs-team-a-hr"), index -> !index.contains("-hr-"))).isEmpty();
-        assertThat(service.searchLogs(query("nothing"), index -> true)).isEmpty();
+        assertThat(service.searchLogs(query("logs-team-a-hr"), index -> !index.contains("-hr-")).hits()).isEmpty();
+        assertThat(service.searchLogs(query("nothing"), index -> true).hits()).isEmpty();
         assertThat(service.aggregateLogs(aggregate("nothing"), index -> true)).isEmpty();
         assertThat(searched).isEmpty();
         assertThat(aggregated).isEmpty();
@@ -135,7 +176,7 @@ class OpenSearchServiceTest {
     void hitsOutsideTheScopeAreDropped() {
         hits = List.of(hit("logs-team-a-1"), hit("logs-team-ab-1"), hit("secret-hr-1"), hit(".security"));
 
-        assertThat(service.searchLogs(query("logs-team-a"), index -> true)).extracting(LogHit::index)
+        assertThat(service.searchLogs(query("logs-team-a"), index -> true).hits()).extracting(LogHit::index)
                 .containsExactly("logs-team-a-1");
     }
 
@@ -223,5 +264,66 @@ class OpenSearchServiceTest {
         assertThatThrownBy(() -> service.getDocument("logs-team-a-1", "1")).isInstanceOf(NotFoundOrDeniedException.class);
         scope = new IndexScope(List.of());
         assertThatThrownBy(() -> service.getDocument("logs-team-a-1", "1")).isInstanceOf(NotFoundOrDeniedException.class);
+    }
+
+    @Test
+    void thePositionAfterTheLastRawHitSurvivesTheDroppingOfHitsOutsideTheScope() {
+        hits = List.of(hit("secret-hr-1"));
+        next = new SearchAfter(1761556502123L, "doc-9");
+
+        LogPage page = service.searchLogs(query("logs-team-a"), index -> true);
+
+        assertThat(page.hits()).isEmpty();
+        assertThat(page.next()).isEqualTo(next);
+    }
+
+    @Test
+    void countAndValidateQueryOnlyTheIndicesTheCallerMayRead() {
+        assertThat(service.countLogs(query("logs-team-a"), index -> !index.contains("-hr-")).count()).isEqualTo(42);
+        service.validateQuery(query("logs-team-a"), index -> !index.contains("-hr-"));
+
+        assertThat(counted).containsExactly(List.of("logs-team-a", "logs-team-a-1"), List.of("logs-team-a", "logs-team-a-1"));
+    }
+
+    @Test
+    void countAndValidateWithNothingToQueryAskNoOne() {
+        names = List.of();
+
+        assertThat(service.countLogs(query("logs-team-a"), index -> true)).isEqualTo(new LogCount(0, true));
+        assertThat(service.validateQuery(query("logs-team-a"), index -> true).checked()).isZero();
+        assertThat(counted).isEmpty();
+    }
+
+    @Test
+    void indicesAreListedByNameInPagesWithTheLastNameAsTheContinuation() {
+        names = List.of("logs-team-a", "logs-team-a-1", "logs-team-a-2", "logs-team-a-3", "logs-team-ab-1");
+
+        IndexPage first = service.listIndices("logs-team-a", null, 2, index -> true);
+        IndexPage second = service.listIndices("logs-team-a", first.lastName(), 2, index -> true);
+
+        assertThat(first.indices()).extracting(IndexInfo::name).containsExactly("logs-team-a", "logs-team-a-1");
+        assertThat(first.lastName()).isEqualTo("logs-team-a-1");
+        assertThat(second.indices()).extracting(IndexInfo::name).containsExactly("logs-team-a-2", "logs-team-a-3");
+        assertThat(second.lastName()).as("the last page has no continuation").isNull();
+        assertThat(described).containsExactly(List.of("logs-team-a", "logs-team-a-1"), List.of("logs-team-a-2", "logs-team-a-3"));
+    }
+
+    @Test
+    void theIndexListSkipsWhatThePolicyRefusesBeforeCountingThePage() {
+        service.listIndices("logs-team-a", null, 2, index -> !index.contains("-hr-"));
+
+        assertThat(described).containsExactly(List.of("logs-team-a", "logs-team-a-1"));
+        assertThat(service.listIndices("nothing", null, 2, index -> true).indices()).isEmpty();
+        assertThat(described).hasSize(1);
+    }
+
+    @Test
+    void aMappingIsReadOnlyFromAnIndexInsideTheScope() {
+        mapping = new IndexMapping("logs-team-a-1", List.of(), false);
+
+        assertThat(service.getIndexMapping("logs-team-a-1").index()).isEqualTo("logs-team-a-1");
+        assertThatThrownBy(() -> service.getIndexMapping("secret-hr-1")).isInstanceOf(NotFoundOrDeniedException.class);
+        mapping = null;
+        assertThatThrownBy(() -> service.getIndexMapping("logs-team-a-1")).isInstanceOf(NotFoundOrDeniedException.class);
     }
 }

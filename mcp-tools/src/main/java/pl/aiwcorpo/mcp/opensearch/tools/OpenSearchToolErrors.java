@@ -2,6 +2,7 @@ package pl.aiwcorpo.mcp.opensearch.tools;
 
 import java.util.Optional;
 import org.springframework.stereotype.Component;
+import pl.aiwcorpo.mcp.opensearch.core.domain.BackendUnavailableFeatureException;
 import pl.aiwcorpo.mcp.opensearch.core.domain.NotFoundOrDeniedException;
 import pl.aiwcorpo.mcp.opensearch.core.domain.TooManyIndicesException;
 import pl.aiwcorpo.mcp.platform.error.McpErrorMapper.SafeError;
@@ -22,6 +23,10 @@ public class OpenSearchToolErrors implements ToolErrorMapping {
         if (ex instanceof TooManyIndicesException) {
             return Optional.of(new SafeError(ToolErrorCode.INVALID_ARGUMENT.code(),
                     "The index prefix covers too many indices for one request; narrow the date range (from and to)."));
+        }
+        if (ex instanceof BackendUnavailableFeatureException) {
+            return Optional.of(new SafeError(ToolErrorCode.UPSTREAM_UNAVAILABLE.code(),
+                    "This tool is not available for the OpenSearch version found at startup; get_backend_info tells which."));
         }
         return Optional.empty();
     }

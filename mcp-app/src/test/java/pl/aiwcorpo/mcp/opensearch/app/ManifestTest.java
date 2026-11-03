@@ -79,7 +79,7 @@ class ManifestTest extends ServerTestSupport {
         JsonNode manifest = manifest();
         List<JsonNode> listed = listedTools();
 
-        assertThat(listed).hasSameSizeAs(manifest.get("tools")).hasSize(3);
+        assertThat(listed).hasSameSizeAs(manifest.get("tools")).hasSize(9);
         for (JsonNode tool : manifest.get("tools")) {
             String name = tool.get("name").asString();
             JsonNode published = listed.stream().filter(t -> t.get("name").asString().equals(name)).findFirst().orElseThrow();
@@ -99,9 +99,9 @@ class ManifestTest extends ServerTestSupport {
     }
 
     @Test
-    void onlyTheIndexOfGetDocumentIsAResourceRef() throws Exception {
+    void onlyTheIndexOfTheToolsThatReadOneIndexIsAResourceRef() throws Exception {
         for (JsonNode tool : manifest().get("tools")) {
-            if (tool.get("name").asString().equals("get_document")) {
+            if (List.of("get_document", "get_index_mapping").contains(tool.get("name").asString())) {
                 assertThat(tool.get("resourceRefs")).hasSize(1);
                 assertThat(tool.at("/resourceRefs/0/argument").asString()).isEqualTo("index");
                 assertThat(tool.at("/resourceRefs/0/type").asString()).isEqualTo("OpenSearch::Index");

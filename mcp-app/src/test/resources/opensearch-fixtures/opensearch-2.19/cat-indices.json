@@ -1,0 +1,11 @@
+[
+  {"index":"logs-team-a-2026.10.26","health":"green","docs.count":"184203","store.size":"73400320"},
+  {"index":"logs-team-a-2026.10.27","health":"yellow","docs.count":"91877","store.size":"31457280"},
+  {"index":"logs-team-ab-1","health":"green","docs.count":"12","store.size":"22528"},
+  {"index":"secret-hr-1","health":"green","docs.count":"340","store.size":"409600"},
+  {"index":"logs-team-a-restricted","health":"green","docs.count":"5","store.size":"11264"},
+  {"index":"logs-team-a-hidden","health":"green","docs.count":"7","store.size":"11264"},
+  {"index":"logs-team-a-hr-1","health":"green","docs.count":"90","store.size":"102400"},
+  {"index":"logs-team-b-1","health":"red","docs.count":null,"store.size":null},
+  {"index":"logs-team-b","health":"green","docs.count":"3","store.size":"11264"}
+]

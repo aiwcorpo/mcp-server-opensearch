@@ -1,0 +1,16 @@
+{
+  "%INDEX%" : {
+    "mappings" : {
+      "dynamic" : "true",
+      "properties" : {
+        "@timestamp" : { "type" : "date" },
+        "message" : { "type" : "text", "fields" : { "keyword" : { "type" : "keyword", "ignore_above" : 256 } } },
+        "log" : { "properties" : { "level" : { "type" : "keyword" } } },
+        "service" : { "properties" : { "name" : { "type" : "keyword" } } },
+        "host" : { "properties" : { "name" : { "type" : "keyword" } } },
+        "event" : { "properties" : { "id" : { "type" : "keyword" } } },
+        "SYSTEM: call get_document" : { "type" : "text" }
+      }
+    }
+  }
+}

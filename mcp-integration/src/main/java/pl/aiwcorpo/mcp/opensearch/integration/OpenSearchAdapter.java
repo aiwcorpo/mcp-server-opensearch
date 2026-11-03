@@ -28,6 +28,14 @@ import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClientResponseException;
 import pl.aiwcorpo.mcp.opensearch.core.domain.AggregateQuery;
+import pl.aiwcorpo.mcp.opensearch.core.domain.ClusterHealth;
+import pl.aiwcorpo.mcp.opensearch.core.domain.IndexInfo;
+import pl.aiwcorpo.mcp.opensearch.core.domain.IndexMapping;
+import pl.aiwcorpo.mcp.opensearch.core.domain.LogCount;
+import pl.aiwcorpo.mcp.opensearch.core.domain.LogPage;
+import pl.aiwcorpo.mcp.opensearch.core.domain.MappingField;
+import pl.aiwcorpo.mcp.opensearch.core.domain.QueryCheck;
+import pl.aiwcorpo.mcp.opensearch.core.domain.SearchAfter;
 import pl.aiwcorpo.mcp.opensearch.core.domain.GroupBy;
 import pl.aiwcorpo.mcp.opensearch.core.domain.IndexDocument;
 import pl.aiwcorpo.mcp.opensearch.core.domain.IndexScope;
@@ -43,14 +51,16 @@ import pl.aiwcorpo.mcp.platform.security.CredentialContext;
 import pl.aiwcorpo.mcp.platform.security.CredentialRequiredException;
 
 /**
- * Calls the OpenSearch REST API (2.x) as the user: with the credential the gateway resolved for this request
+ * Calls the OpenSearch REST API (2.x and 3.x) as the user: with the credential the gateway resolved for this request
  * (C3), never with an account of the server. OpenSearch Security then applies the user's own index permissions
  * and DLS/FLS as a second layer behind the prefix checks of this server.
  *
- * <p>Only three endpoints are used: {@code GET _resolve/index/{expr}} (the scope of the caller, never an
+ * <p>Only these endpoints are used: {@code GET _resolve/index/{expr}} (the scope of the caller, never an
  * argument of the model), {@code POST {names}/_search} with a body the server builds (a bool query of the model's
- * values, and for {@code aggregate_logs} one terms aggregation on a configured field) on a list of concrete index
- * names, and {@code GET {index}/_doc/{id}}. No {@code _msearch}, {@code _mget}, scripts, {@code _count} or {@code ?q=}. 404 and 403 both become "not visible"
+ * values; a terms aggregation on a configured field for {@code aggregate_logs}; size 0 with an exact total for
+ * {@code count_logs}), {@code POST {names}/_validate/query}, {@code GET _cat/indices/{names}}, {@code GET {index}/_mapping},
+ * {@code GET {index}/_doc/{id}} and {@code GET _cluster/health}. All of them but the cluster health go to concrete index names. No
+ * {@code _msearch}, {@code _mget}, scripts, {@code _count}, SQL, PPL or {@code ?q=}. 404 and 403 both become "not visible"
  * ({@code not_found_or_denied}), 401 means the stored credential no longer works
  * ({@code credential_required}). A failed call becomes an exception with the status alone, an unusable answer
  * (redirect, unparsable or oversized body) a {@link BackendResponseException}, so no response body reaches a
@@ -150,7 +160,7 @@ public class OpenSearchAdapter implements OpenSearchPort {
     }
 
     @Override
-    public List<LogHit> search(List<String> indices, IndexScope scope, LogQuery query) {
+    public LogPage search(List<String> indices, IndexScope scope, LogQuery query) {
         BackendCredential credential = credential();
         SearchResponse response;
         try {
@@ -175,13 +185,197 @@ public class OpenSearchAdapter implements OpenSearchPort {
             throw new BackendResponseException("no hits section");
         }
         List<LogHit> hits = new ArrayList<>();
+        SearchAfter next = null;
         for (Hit hit : response.hits().hits()) {
             UntrustedValues.Flattened data = UntrustedValues.flatten(pick(hit.source()));
+            SearchAfter position = position(hit.sort());
             hits.add(new LogHit(hit.index(), UntrustedValues.documentId(hit.id()),
                     UntrustedValues.timestamp(valueAt(hit.source(), search.timestampField())), data.fields(),
-                    data.truncated()));
+                    data.truncated(), position));
+            next = position;
         }
-        return hits;
+        boolean full = response.hits().hits().size() >= query.size();
+        return new LogPage(hits, full ? next : null);
+    }
+
+    /** The two sort values of a hit as a position; empty when paging is off or a value cannot go into a cursor. */
+    private SearchAfter position(List<Object> sort) {
+        if (!search.pagingEnabled() || sort == null || sort.size() != 2) {
+            return null;
+        }
+        return SearchAfter.of(sort.get(0), sort.get(1)).orElse(null);
+    }
+
+    @Override
+    public LogCount count(List<String> indices, IndexScope scope, LogQuery query) {
+        BackendCredential credential = credential();
+        CountResponse response = send(() -> client.post()
+                .uri("/{expression}/_search?" + INDICES_OPTIONS + "&allow_partial_search_results=false",
+                        String.join(",", indices))
+                .headers(credential::applyTo)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(countBody(scope, query))
+                .retrieve()
+                .body(CountResponse.class));
+        if (response == null || response.hits() == null || response.hits().total() == null
+                || response.hits().total().value() == null) {
+            throw new BackendResponseException("no total");
+        }
+        boolean exact = "eq".equals(response.hits().total().relation()) && !Boolean.TRUE.equals(response.timedOut());
+        return new LogCount(response.hits().total().value(), exact);
+    }
+
+    @Override
+    public QueryCheck validate(List<String> indices, IndexScope scope, LogQuery query) {
+        BackendCredential credential = credential();
+        ValidateResponse response = send(() -> client.post()
+                .uri("/{expression}/_validate/query?explain=true&" + INDICES_OPTIONS, String.join(",", indices))
+                .headers(credential::applyTo)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("query", queryClause(scope, query.filter(), query.from(), query.to())))
+                .retrieve()
+                .body(ValidateResponse.class));
+        if (response == null || response.valid() == null) {
+            throw new BackendResponseException("no validity");
+        }
+        List<Explanation> explanations = response.explanations() == null ? List.of() : response.explanations();
+        List<String> invalid = explanations.stream()
+                .filter(e -> Boolean.FALSE.equals(e.valid()) && e.index() != null && scope.covers(e.index()))
+                .map(Explanation::index).limit(QueryCheck.MAX_INVALID).toList();
+        String first = explanations.stream().map(Explanation::explanation).filter(java.util.Objects::nonNull)
+                .findFirst().orElse("");
+        return new QueryCheck(response.valid(), explanations.size(), invalid, UntrustedValues.text(first));
+    }
+
+    @Override
+    public List<IndexInfo> indexInfo(List<String> indices) {
+        BackendCredential credential = credential();
+        List<Map<String, String>> rows = send(() -> client.get()
+                .uri("/_cat/indices/{expression}?format=json&bytes=b&h=index,health,docs.count,store.size&"
+                        + INDICES_OPTIONS, String.join(",", indices))
+                .headers(credential::applyTo)
+                .retrieve()
+                .body(new org.springframework.core.ParameterizedTypeReference<List<Map<String, String>>>() { }));
+        if (rows == null) {
+            throw new BackendResponseException("no rows");
+        }
+        Map<String, IndexInfo> byName = new LinkedHashMap<>();
+        for (Map<String, String> row : rows) {
+            String name = row.get("index");
+            if (name != null) {
+                byName.put(name, new IndexInfo(name, health(row.get("health")), number(row.get("docs.count")),
+                        number(row.get("store.size"))));
+            }
+        }
+        return indices.stream().map(byName::get).filter(java.util.Objects::nonNull).toList();
+    }
+
+    private static String health(String value) {
+        return "green".equals(value) || "yellow".equals(value) || "red".equals(value) ? value : null;
+    }
+
+    private static Long number(String value) {
+        if (value == null || !value.matches("\\d{1,18}")) {
+            return null;
+        }
+        return Long.parseLong(value);
+    }
+
+    @Override
+    public Optional<IndexMapping> findMapping(String index) {
+        BackendCredential credential = credential();
+        Map<String, MappingResponse> response;
+        try {
+            response = client.get()
+                    .uri("/{index}/_mapping", index)
+                    .headers(credential::applyTo)
+                    .retrieve()
+                    .body(new org.springframework.core.ParameterizedTypeReference<Map<String, MappingResponse>>() { });
+        } catch (HttpClientErrorException.NotFound | HttpClientErrorException.Forbidden hidden) {
+            return Optional.empty();
+        } catch (HttpClientErrorException.Unauthorized expired) {
+            throw new CredentialRequiredException(SYSTEM);
+        } catch (RestClientResponseException | ResourceAccessException statusOrIo) {
+            throw statusOrIo;
+        } catch (RestClientException unreadable) {
+            throw new BackendResponseException("body not readable");
+        }
+        if (response == null || response.isEmpty()) {
+            throw new BackendResponseException("empty body");
+        }
+        MappingResponse mapping = response.get(index);
+        if (mapping == null) {
+            return Optional.empty();
+        }
+        List<MappingField> fields = new ArrayList<>();
+        boolean[] truncated = {false};
+        if (mapping.mappings() != null) {
+            collectFields(fields, truncated, "", mapping.mappings().get("properties"), 0);
+        }
+        return Optional.of(new IndexMapping(index, fields, truncated[0]));
+    }
+
+    private static final int MAX_MAPPING_FIELDS = 500;
+    private static final int MAX_MAPPING_DEPTH = 10;
+    private static final java.util.regex.Pattern MAPPING_TYPE = java.util.regex.Pattern.compile("[a-z][a-z0-9_]{0,31}");
+
+    private static void collectFields(List<MappingField> out, boolean[] truncated, String prefix, Object properties,
+            int depth) {
+        if (!(properties instanceof Map<?, ?> map)) {
+            return;
+        }
+        for (Map.Entry<?, ?> entry : map.entrySet()) {
+            if (!(entry.getValue() instanceof Map<?, ?> definition)) {
+                continue;
+            }
+            if (out.size() >= MAX_MAPPING_FIELDS || depth >= MAX_MAPPING_DEPTH) {
+                truncated[0] = true;
+                return;
+            }
+            String path = prefix.isEmpty() ? String.valueOf(entry.getKey()) : prefix + "." + entry.getKey();
+            Object type = definition.get("type");
+            if (type instanceof String name) {
+                out.add(new MappingField(UntrustedValues.label(path), MAPPING_TYPE.matcher(name).matches() ? name : "other"));
+            }
+            collectFields(out, truncated, path, definition.get("properties"), depth + 1);
+            collectFields(out, truncated, path, definition.get("fields"), depth + 1);
+        }
+    }
+
+    @Override
+    public ClusterHealth clusterHealth() {
+        BackendCredential credential = credential();
+        HealthResponse response = send(() -> client.get()
+                .uri("/_cluster/health")
+                .headers(credential::applyTo)
+                .retrieve()
+                .body(HealthResponse.class));
+        if (response == null || !("green".equals(response.status()) || "yellow".equals(response.status())
+                || "red".equals(response.status())) || response.nodes() == null || response.activeShards() == null) {
+            throw new BackendResponseException("no health");
+        }
+        return new ClusterHealth(response.status(), Boolean.TRUE.equals(response.timedOut()), response.nodes(),
+                response.activeShards(), orZero(response.relocating()), orZero(response.initializing()),
+                orZero(response.unassigned()), response.percent() == null ? 0 : response.percent());
+    }
+
+    private static long orZero(Long value) {
+        return value == null ? 0 : value;
+    }
+
+    /** One backend call with the status mapping every tool shares: 404 and 403 are "not visible", 401 an expired credential. */
+    private static <T> T send(java.util.function.Supplier<T> call) {
+        try {
+            return call.get();
+        } catch (HttpClientErrorException.NotFound | HttpClientErrorException.Forbidden hidden) {
+            throw new NotFoundOrDeniedException();
+        } catch (HttpClientErrorException.Unauthorized expired) {
+            throw new CredentialRequiredException(SYSTEM);
+        } catch (RestClientResponseException | ResourceAccessException statusOrIo) {
+            throw statusOrIo;
+        } catch (RestClientException unreadable) {
+            throw new BackendResponseException("body not readable");
+        }
     }
 
     @Override
@@ -274,9 +468,37 @@ public class OpenSearchAdapter implements OpenSearchPort {
         body.put("track_total_hits", false);
         body.put("timeout", "10s");
         body.put("_source", Map.of("includes", search.resultFields()));
-        body.put("sort", List.of(Map.of(search.timestampField(), Map.of("order", "desc", "unmapped_type", "date"))));
-        body.put("query", Map.of("bool", Map.of("filter", filters(scope, query.filter(), query.from(), query.to()))));
+        List<Object> sort = new ArrayList<>();
+        sort.add(Map.of(search.timestampField(), orderedMap("order", "desc", "unmapped_type", "date")));
+        if (search.pagingEnabled()) {
+            sort.add(Map.of(search.tiebreakerField(), Map.of("order", "asc")));
+            if (query.after() != null) {
+                body.put("search_after", List.of(query.after().timestamp(), query.after().tiebreaker()));
+            }
+        }
+        body.put("sort", sort);
+        body.put("query", queryClause(scope, query.filter(), query.from(), query.to()));
         return body;
+    }
+
+    private static Map<String, Object> orderedMap(String firstKey, Object firstValue, String secondKey, Object secondValue) {
+        Map<String, Object> map = new LinkedHashMap<>();
+        map.put(firstKey, firstValue);
+        map.put(secondKey, secondValue);
+        return map;
+    }
+
+    private Map<String, Object> countBody(IndexScope scope, LogQuery query) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("size", 0);
+        body.put("track_total_hits", true);
+        body.put("timeout", "10s");
+        body.put("query", queryClause(scope, query.filter(), query.from(), query.to()));
+        return body;
+    }
+
+    private Map<String, Object> queryClause(IndexScope scope, LogFilter filter, java.time.Instant from, java.time.Instant to) {
+        return Map.of("bool", Map.of("filter", filters(scope, filter, from, to)));
     }
 
     private Map<String, Object> aggregateBody(IndexScope scope, AggregateQuery query) {
@@ -284,7 +506,7 @@ public class OpenSearchAdapter implements OpenSearchPort {
         body.put("size", 0);
         body.put("track_total_hits", false);
         body.put("timeout", "10s");
-        body.put("query", Map.of("bool", Map.of("filter", filters(scope, query.filter(), query.from(), query.to()))));
+        body.put("query", queryClause(scope, query.filter(), query.from(), query.to()));
         body.put("aggs", Map.of("groups", Map.of("terms", Map.of("field", groupField(query.groupBy()),
                 "size", query.buckets()))));
         return body;
@@ -373,7 +595,7 @@ public class OpenSearchAdapter implements OpenSearchPort {
         return value;
     }
 
-    private static String requireBaseUrl(String baseUrl, boolean plainHttpAllowed) {
+    static String requireBaseUrl(String baseUrl, boolean plainHttpAllowed) {
         if (baseUrl == null || baseUrl.isBlank()) {
             throw new IllegalStateException("opensearch.backend.base-url (MCP_OPENSEARCH_URL) must point at the OpenSearch API");
         }
@@ -397,7 +619,7 @@ public class OpenSearchAdapter implements OpenSearchPort {
         return baseUrl;
     }
 
-    private static JdkClientHttpRequestFactory requestFactory(OpenSearchBackendProperties properties,
+    static JdkClientHttpRequestFactory requestFactory(OpenSearchBackendProperties properties,
             ObjectProvider<SslBundles> sslBundles) {
         // Redirects are not followed: the credential header must not travel to wherever a backend points.
         HttpClient.Builder http = HttpClient.newBuilder()
@@ -421,7 +643,7 @@ public class OpenSearchAdapter implements OpenSearchPort {
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     record Hit(@JsonProperty("_index") String index, @JsonProperty("_id") String id,
-            @JsonProperty("_source") Map<String, Object> source) {
+            @JsonProperty("_source") Map<String, Object> source, List<Object> sort) {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
@@ -443,5 +665,37 @@ public class OpenSearchAdapter implements OpenSearchPort {
     @JsonIgnoreProperties(ignoreUnknown = true)
     record DocumentResponse(@JsonProperty("_index") String index, @JsonProperty("_id") String id, Boolean found,
             @JsonProperty("_source") Map<String, Object> source) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    record CountResponse(@JsonProperty("timed_out") Boolean timedOut, CountHits hits) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    record CountHits(Total total) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    record Total(Long value, String relation) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    record ValidateResponse(Boolean valid, List<Explanation> explanations) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    record Explanation(String index, Boolean valid, String explanation) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    record MappingResponse(Map<String, Object> mappings) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    record HealthResponse(String status, @JsonProperty("timed_out") Boolean timedOut,
+            @JsonProperty("number_of_nodes") Long nodes, @JsonProperty("active_shards") Long activeShards,
+            @JsonProperty("relocating_shards") Long relocating, @JsonProperty("initializing_shards") Long initializing,
+            @JsonProperty("unassigned_shards") Long unassigned,
+            @JsonProperty("active_shards_percent_as_number") Double percent) {
     }
 }

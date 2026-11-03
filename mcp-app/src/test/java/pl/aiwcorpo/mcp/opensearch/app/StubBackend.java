@@ -8,6 +8,7 @@ import java.io.UncheckedIOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -19,8 +20,10 @@ import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
 
 /**
- * OpenSearch 2.x in tests: a real HTTP server on loopback answering the three endpoints the adapter uses with
- * response shapes of the OpenSearch REST API ({@code _resolve/index}, {@code _search}, {@code _doc}).
+ * OpenSearch in tests: a real HTTP server on loopback answering the endpoints the adapter uses with response shapes of
+ * the OpenSearch REST API ({@code GET /}, {@code _resolve/index}, {@code _search}, {@code _doc}, {@code _cat/indices},
+ * {@code _mapping}, {@code _validate/query}, {@code _cluster/health}). The bodies of the endpoints that differ by version
+ * come from {@code opensearch-fixtures/<version>/} (see the README there); {@link #useFixtures} picks the version.
  *
  * <p>Cluster content (the server is configured with prefixes {@code logs-team-a} and {@code logs-team-b}):
  * <ul>
@@ -63,6 +66,15 @@ final class StubBackend {
     /** Resolve answers 404: no index of the scope exists. */
     static final String EMPTY_CLUSTER_CREDENTIAL = "Bearer fault-empty-cluster-token";
     static final String REDIRECT_CREDENTIAL = "Bearer fault-redirect-token";
+    /** The only credential {@code GET /} accepts, as a secured cluster would: the probe sends it from its own configuration. */
+    static final String PROBE_CREDENTIAL = "Bearer probe-token-of-the-server";
+    /** {@code _validate/query} answers {@code valid: false} for the first index. */
+    static final String INVALID_QUERY_CREDENTIAL = "Bearer fault-invalid-query-token";
+    /** The total of a count is a lower bound ({@code relation: gte}). */
+    static final String LOWER_BOUND_CREDENTIAL = "Bearer fault-lower-bound-token";
+    static final String FIXTURES_2_19 = "opensearch-2.19";
+    static final String FIXTURES_3 = "opensearch-3.x";
+    static final String FIXTURES_ES_7_10 = "elasticsearch-7.10";
     static final String BODY_MARKER = "SECRETBODYTOKEN123";
     static final long SLOW_MILLIS = 4_000;
     static final int HUGE_BYTES = 256 * 1024;
@@ -93,10 +105,14 @@ final class StubBackend {
         }
     }
 
+    private static final tools.jackson.databind.json.JsonMapper JSON = tools.jackson.databind.json.JsonMapper.builder().build();
+
     private final HttpServer server;
     private final HttpServer elsewhere;
     private final List<Request> requests = new CopyOnWriteArrayList<>();
     private final List<String> elsewhereHits = new CopyOnWriteArrayList<>();
+    private final List<String> probeAuthorizations = new CopyOnWriteArrayList<>();
+    private volatile String fixtures = FIXTURES_2_19;
 
     private StubBackend(HttpServer server, HttpServer elsewhere) {
         this.server = server;
@@ -123,6 +139,11 @@ final class StubBackend {
         }
     }
 
+    void stop() {
+        server.stop(0);
+        elsewhere.stop(0);
+    }
+
     String baseUrl() {
         return "http://127.0.0.1:" + server.getAddress().getPort();
     }
@@ -141,15 +162,46 @@ final class StubBackend {
         return requests.stream().map(Request::authorization).toList();
     }
 
+    /** Authorization headers of {@code GET /}, which are not among {@link #requests()}: the probe runs on its own schedule. */
+    List<String> probeAuthorizations() {
+        return List.copyOf(probeAuthorizations);
+    }
+
+    /** Which directory of {@code opensearch-fixtures} answers the version-dependent endpoints. */
+    void useFixtures(String directory) {
+        this.fixtures = directory;
+    }
+
     void reset() {
         requests.clear();
         elsewhereHits.clear();
+        fixtures = FIXTURES_2_19;
+    }
+
+    private String fixture(String name) {
+        try (java.io.InputStream in = StubBackend.class.getResourceAsStream("/opensearch-fixtures/" + fixtures + "/" + name)) {
+            if (in == null) {
+                throw new IllegalStateException("missing fixture " + fixtures + "/" + name);
+            }
+            return new String(in.readAllBytes(), StandardCharsets.UTF_8);
+        } catch (IOException ex) {
+            throw new UncheckedIOException(ex);
+        }
     }
 
     private void handle(HttpExchange exchange) throws IOException {
         String authorization = exchange.getRequestHeaders().getFirst("Authorization");
         String path = exchange.getRequestURI().getPath();
         String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+        if ("/".equals(path) && "GET".equals(exchange.getRequestMethod())) {
+            probeAuthorizations.add(String.valueOf(authorization));
+            if (PROBE_CREDENTIAL.equals(authorization)) {
+                respond(exchange, 200, fixture("root.json"));
+            } else {
+                respond(exchange, 401, "{\"error\":\"Unauthorized\"}");
+            }
+            return;
+        }
         requests.add(new Request(exchange.getRequestMethod(), exchange.getRequestURI().getRawPath(),
                 exchange.getRequestURI().getRawQuery(), String.valueOf(authorization), body));
         if (EXPIRED_CREDENTIAL.equals(authorization)) {
@@ -164,8 +216,16 @@ final class StubBackend {
             redirect(exchange);
         } else if (path.startsWith("/_resolve/index/")) {
             resolve(exchange, path.substring("/_resolve/index/".length()));
+        } else if (path.startsWith("/_cat/indices/")) {
+            catIndices(exchange, path.substring("/_cat/indices/".length()));
+        } else if ("/_cluster/health".equals(path)) {
+            respond(exchange, 200, fixture("cluster-health.json"));
+        } else if (path.endsWith("/_mapping") && "GET".equals(exchange.getRequestMethod())) {
+            mapping(exchange, path.substring(1, path.length() - "/_mapping".length()));
+        } else if (path.endsWith("/_validate/query") && "POST".equals(exchange.getRequestMethod())) {
+            validate(exchange, path.substring(1, path.length() - "/_validate/query".length()), authorization);
         } else if (path.endsWith("/_search") && "POST".equals(exchange.getRequestMethod())) {
-            search(exchange, path.substring(1, path.length() - "/_search".length()), body);
+            search(exchange, path.substring(1, path.length() - "/_search".length()), body, authorization);
         } else if (path.contains("/_doc/") && "GET".equals(exchange.getRequestMethod())) {
             String[] parts = path.substring(1).split("/_doc/", 2);
             document(exchange, parts[0], parts[1]);
@@ -225,7 +285,11 @@ final class StubBackend {
                 + "],\"data_streams\":[" + streamsJson + "]}");
     }
 
-    private void search(HttpExchange exchange, String expression, String body) throws IOException {
+    private void search(HttpExchange exchange, String expression, String body, String authorization) throws IOException {
+        if (body.contains("\"track_total_hits\":true")) {
+            respond(exchange, 200, fixture(LOWER_BOUND_CREDENTIAL.equals(authorization) ? "count-lower-bound.json" : "count.json"));
+            return;
+        }
         if (body.contains("\"aggs\"")) {
             respond(exchange, 200, "{\"took\":2,\"timed_out\":false,\"_shards\":{\"total\":2,\"successful\":2,\"skipped\":0,"
                     + "\"failed\":0},\"hits\":{\"max_score\":null,\"hits\":[]},\"aggregations\":{\"groups\":{"
@@ -234,6 +298,11 @@ final class StubBackend {
             return;
         }
         List<String> hits = new ArrayList<>();
+        if (body.contains("\"search_after\"")) {
+            hits.add(hit("logs-team-a-2026.10.26", "Ab0n8ZIBdLrT0q1aHf01", "2026-10-26T23:00:00.000Z", "second page entry"));
+            respond(exchange, 200, "{\"took\":3,\"timed_out\":false,\"hits\":{\"max_score\":null,\"hits\":[" + String.join(",", hits) + "]}}");
+            return;
+        }
         hits.add(hit("logs-team-a-2026.10.27", "Xk3n8ZIBdLrT0q1aHf2p", "2026-10-27T09:15:02.123Z",
                 "payment failed <script>alert(1)</script> & retried"));
         hits.add(hit("logs-team-a-2026.10.26", "Ab0n8ZIBdLrT0q1aHf00", "2026-10-26T23:59:59.000Z", "error: disk full"));
@@ -244,10 +313,46 @@ final class StubBackend {
                 + "\"failed\":0},\"hits\":{\"max_score\":null,\"hits\":[" + String.join(",", hits) + "]}}");
     }
 
+    private void catIndices(HttpExchange exchange, String expression) throws IOException {
+        List<String> names = List.of(expression.split(","));
+        List<String> rows = new ArrayList<>();
+        for (tools.jackson.databind.JsonNode row : JSON.readTree(fixture("cat-indices.json"))) {
+            if (names.contains(row.path("index").asString(""))) {
+                rows.add(row.toString());
+            }
+        }
+        respond(exchange, 200, "[" + String.join(",", rows) + "]");
+    }
+
+    private void mapping(HttpExchange exchange, String index) throws IOException {
+        if (FORBIDDEN.contains(index)) {
+            respond(exchange, 403, "{\"error\":{\"type\":\"security_exception\"},\"status\":403}");
+        } else if (!INDICES.contains(index)) {
+            respond(exchange, 404, "{\"error\":{\"type\":\"index_not_found_exception\"},\"status\":404}");
+        } else {
+            respond(exchange, 200, fixture("mapping.json").replace("%INDEX%", index));
+        }
+    }
+
+    private void validate(HttpExchange exchange, String expression, String authorization) throws IOException {
+        boolean invalid = INVALID_QUERY_CREDENTIAL.equals(authorization);
+        List<String> explanations = new ArrayList<>();
+        for (String index : expression.split(",")) {
+            boolean thisInvalid = invalid && explanations.isEmpty();
+            explanations.add(thisInvalid
+                    ? "{\"index\":\"" + index + "\",\"valid\":false,\"error\":\"failed to parse " + BODY_MARKER + "\"}"
+                    : "{\"index\":\"" + index + "\",\"valid\":true,\"explanation\":\"+@timestamp:[1761552000000 TO 1761559200000)"
+                            + " +message:payment +message:failed #(_index:logs-team-a | _index:logs-team-a-*)\"}");
+        }
+        respond(exchange, 200, fixture(invalid ? "validate-query-invalid.json" : "validate-query.json")
+                .replace("%EXPLANATIONS%", String.join(",", explanations)));
+    }
+
     private static String hit(String index, String id, String timestamp, String message) {
         return "{\"_index\":\"" + index + "\",\"_id\":\"" + id + "\",\"_score\":null,\"_source\":{\"@timestamp\":\""
                 + timestamp + "\",\"message\":\"" + message + "\",\"log\":{\"level\":\"ERROR\"},"
-                + "\"user\":{\"password\":\"not-for-the-model\"}},\"sort\":[1761556502123]}";
+                + "\"user\":{\"password\":\"not-for-the-model\"}},\"sort\":[" + Instant.parse(timestamp).toEpochMilli()
+                + ",\"evt-" + id + "\"]}";
     }
 
     private void document(HttpExchange exchange, String index, String id) throws IOException {

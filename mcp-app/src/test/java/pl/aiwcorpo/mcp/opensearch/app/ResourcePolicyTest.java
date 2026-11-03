@@ -67,7 +67,7 @@ class ResourcePolicyTest extends ServerTestSupport {
             McpSchema.CallToolResult restricted = call(client, "search_logs", search("logs-team-a-hr-1"));
 
             assertThat(restricted.isError()).isFalse();
-            assertThat(text(restricted).replace("logs-team-a-hr-1", "PREFIX")).contains("\"hits\":[]").isEqualTo(missing);
+            assertThat(text(restricted).replace("logs-team-a-hr-1", "PREFIX")).contains("\"items\":[]").isEqualTo(missing);
             assertThat(text(call(client, "search_logs", search("logs-team-b-stream"))).replace("logs-team-b-stream", "PREFIX"))
                     .as("a data stream by name").isEqualTo(missing);
         }
@@ -97,7 +97,7 @@ class ResourcePolicyTest extends ServerTestSupport {
                     .isEqualTo(missing(client));
             McpSchema.CallToolResult search = call(client, "search_logs", search("logs-team-a"));
             assertThat(search.isError()).as(text(search)).isFalse();
-            assertThat(text(search)).contains("\"hits\":[]");
+            assertThat(text(search)).contains("\"items\":[]");
             Map<String, Object> aggregate = new HashMap<>(search("logs-team-a"));
             aggregate.remove("text");
             aggregate.put("group_by", "level");
@@ -112,7 +112,7 @@ class ResourcePolicyTest extends ServerTestSupport {
     void theQueryIsLimitedToTheGrantedPrefixes() {
         try (McpSyncClient client = clientInGroups(PAT, READ_GROUP, GRANT_TEAM_A)) {
             assertThat(call(client, "search_logs", search("logs-team-a")).isError()).isFalse();
-            assertThat(text(call(client, "search_logs", search("logs-team-b")))).contains("\"hits\":[]");
+            assertThat(text(call(client, "search_logs", search("logs-team-b")))).contains("\"items\":[]");
         }
         StubBackend.Request search = BACKEND.requests().stream().filter(r -> r.path().endsWith("/_search")).findFirst().orElseThrow();
         assertThat(search.body()).contains("{\"term\":{\"_index\":\"logs-team-a\"}}", "{\"prefix\":{\"_index\":\"logs-team-a-\"}}")
@@ -127,7 +127,7 @@ class ResourcePolicyTest extends ServerTestSupport {
 
             assertThat(result.isError()).as(text(result)).isFalse();
             assertThat(text(result)).doesNotContain("logs-team-ab-1", "neighbour");
-            assertThat(text(call(client, "search_logs", search("logs-team-ab")))).contains("\"hits\":[]");
+            assertThat(text(call(client, "search_logs", search("logs-team-ab")))).contains("\"items\":[]");
             assertThat(text(call(client, "get_document", Map.of("index", "logs-team-ab-1", "id", DOC_ID)))).contains(NOT_FOUND_OR_DENIED);
         }
         assertThat(BACKEND.requests().getFirst().decodedPath()).isEqualTo("/_resolve/index/logs-team-a,logs-team-a-*");

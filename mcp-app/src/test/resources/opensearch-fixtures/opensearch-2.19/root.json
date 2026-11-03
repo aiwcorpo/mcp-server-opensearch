@@ -1,0 +1,17 @@
+{
+  "name" : "os-node-1",
+  "cluster_name" : "logs-cluster",
+  "cluster_uuid" : "kX0eZpQwR1S8k3jT2m9v4A",
+  "version" : {
+    "distribution" : "opensearch",
+    "number" : "2.19.4",
+    "build_type" : "tar",
+    "build_hash" : "b3d8f1a9c04e7d2b6a51c3e8f90d1a7b2c4e6f80",
+    "build_date" : "2025-09-30T17:41:22.118Z",
+    "build_snapshot" : false,
+    "lucene_version" : "9.12.1",
+    "minimum_wire_compatibility_version" : "7.10.0",
+    "minimum_index_compatibility_version" : "7.0.0"
+  },
+  "tagline" : "The OpenSearch Project: https://opensearch.org/"
+}

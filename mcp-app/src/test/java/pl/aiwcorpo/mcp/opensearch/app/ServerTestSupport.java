@@ -15,10 +15,16 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.Map;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import pl.aiwcorpo.mcp.opensearch.core.domain.OpenSearchFeatures;
+import pl.aiwcorpo.mcp.platform.capability.BackendCapabilities;
+import pl.aiwcorpo.mcp.platform.capability.Capabilities;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import pl.aiwcorpo.mcp.platform.test.TestGateway;
@@ -30,6 +36,7 @@ import tools.jackson.databind.json.JsonMapper;
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("dev")
+@TestPropertySource(properties = "opensearch.backend.probe-authorization=" + StubBackend.PROBE_CREDENTIAL)
 abstract class ServerTestSupport {
 
     static final String SERVER_ID = "mcp-opensearch";
@@ -56,12 +63,27 @@ abstract class ServerTestSupport {
         registry.add("opensearch.scope.index-tags[0].prefix", () -> StubBackend.RESTRICTED_PREFIX);
         registry.add("opensearch.scope.index-tags[0].tags[0]", () -> "restricted");
         // Short limits so the timeout and size tests run quickly; StubBackend's slow and huge documents exceed them.
+        registry.add("opensearch.search.tiebreaker-field", () -> "event.id");
         registry.add("opensearch.backend.read-timeout", () -> "1s");
         registry.add("opensearch.backend.max-response-size", () -> "64KB");
     }
 
     @LocalServerPort
     int port;
+
+    @Autowired
+    BackendCapabilities capabilities;
+
+    /** The probe runs on its own thread after the start; until it has answered, extended tools refuse. */
+    @BeforeEach
+    void probeHasAnswered() throws InterruptedException {
+        long deadline = System.nanoTime() + Duration.ofSeconds(10).toNanos();
+        while (capabilities.of(OpenSearchFeatures.PROBE).state() == Capabilities.State.UNAVAILABLE
+                && System.nanoTime() < deadline) {
+            Thread.sleep(50);
+        }
+        assertThat(capabilities.of(OpenSearchFeatures.PROBE).state()).isNotEqualTo(Capabilities.State.UNAVAILABLE);
+    }
 
     String baseUrl() {
         return "http://127.0.0.1:" + port;

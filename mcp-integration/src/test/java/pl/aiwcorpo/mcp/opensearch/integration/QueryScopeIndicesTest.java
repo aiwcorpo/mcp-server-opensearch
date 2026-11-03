@@ -9,10 +9,15 @@ import java.util.TreeSet;
 import org.junit.jupiter.api.Test;
 import pl.aiwcorpo.mcp.cedar.entities.QueryConstraint;
 import pl.aiwcorpo.mcp.opensearch.core.domain.AggregateQuery;
+import pl.aiwcorpo.mcp.opensearch.core.domain.ClusterHealth;
+import pl.aiwcorpo.mcp.opensearch.core.domain.IndexInfo;
+import pl.aiwcorpo.mcp.opensearch.core.domain.IndexMapping;
+import pl.aiwcorpo.mcp.opensearch.core.domain.LogCount;
+import pl.aiwcorpo.mcp.opensearch.core.domain.LogPage;
+import pl.aiwcorpo.mcp.opensearch.core.domain.QueryCheck;
 import pl.aiwcorpo.mcp.opensearch.core.domain.IndexDocument;
 import pl.aiwcorpo.mcp.opensearch.core.domain.IndexScope;
 import pl.aiwcorpo.mcp.opensearch.core.domain.LogBucket;
-import pl.aiwcorpo.mcp.opensearch.core.domain.LogHit;
 import pl.aiwcorpo.mcp.opensearch.core.domain.LogQuery;
 import pl.aiwcorpo.mcp.opensearch.core.port.out.OpenSearchPort;
 import pl.aiwcorpo.mcp.platform.resource.QueryScope;
@@ -42,7 +47,32 @@ class QueryScopeIndicesTest {
         }
 
         @Override
-        public List<LogHit> search(List<String> indices, IndexScope scope, LogQuery query) {
+        public LogPage search(List<String> indices, IndexScope scope, LogQuery query) {
+            throw new AssertionError();
+        }
+
+        @Override
+        public LogCount count(List<String> indices, IndexScope scope, LogQuery query) {
+            throw new AssertionError();
+        }
+
+        @Override
+        public QueryCheck validate(List<String> indices, IndexScope scope, LogQuery query) {
+            throw new AssertionError();
+        }
+
+        @Override
+        public List<IndexInfo> indexInfo(List<String> indices) {
+            throw new AssertionError();
+        }
+
+        @Override
+        public Optional<IndexMapping> findMapping(String index) {
+            throw new AssertionError();
+        }
+
+        @Override
+        public ClusterHealth clusterHealth() {
             throw new AssertionError();
         }
 

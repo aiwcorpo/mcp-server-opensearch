@@ -6,9 +6,15 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.function.Predicate;
 import pl.aiwcorpo.mcp.opensearch.core.domain.AggregateQuery;
+import pl.aiwcorpo.mcp.opensearch.core.domain.ClusterHealth;
 import pl.aiwcorpo.mcp.opensearch.core.domain.IndexDocument;
+import pl.aiwcorpo.mcp.opensearch.core.domain.IndexMapping;
+import pl.aiwcorpo.mcp.opensearch.core.domain.IndexPage;
+import pl.aiwcorpo.mcp.opensearch.core.domain.LogCount;
+import pl.aiwcorpo.mcp.opensearch.core.domain.LogPage;
+import pl.aiwcorpo.mcp.opensearch.core.domain.QueryCheck;
+import org.jspecify.annotations.Nullable;
 import pl.aiwcorpo.mcp.opensearch.core.domain.LogBucket;
-import pl.aiwcorpo.mcp.opensearch.core.domain.LogHit;
 import pl.aiwcorpo.mcp.opensearch.core.domain.LogQuery;
 import pl.aiwcorpo.mcp.opensearch.core.domain.ResolvedIndex;
 
@@ -23,7 +29,7 @@ public interface OpenSearchUseCase {
      *
      * @throws pl.aiwcorpo.mcp.opensearch.core.domain.TooManyIndicesException when more indices are readable than one request names
      */
-    List<LogHit> searchLogs(LogQuery query, Predicate<String> readable);
+    LogPage searchLogs(LogQuery query, Predicate<String> readable);
 
     /**
      * Counts by one field over the same indices as {@link #searchLogs}; counts cannot be corrected after filtering,
@@ -49,4 +55,30 @@ public interface OpenSearchUseCase {
      * @throws pl.aiwcorpo.mcp.opensearch.core.domain.NotFoundOrDeniedException when the document does not exist or is not visible
      */
     IndexDocument getDocument(String index, String id);
+
+    /**
+     * Counts the documents of the query over the same indices as {@link #searchLogs}, minus what the policy refuses.
+     *
+     * @throws pl.aiwcorpo.mcp.opensearch.core.domain.TooManyIndicesException when more indices are readable than one request names
+     */
+    LogCount countLogs(LogQuery query, Predicate<String> readable);
+
+    /**
+     * Asks OpenSearch whether it accepts the query that {@link #searchLogs} would send, and how it reads it.
+     *
+     * @throws pl.aiwcorpo.mcp.opensearch.core.domain.TooManyIndicesException when more indices are readable than one request names
+     */
+    QueryCheck validateQuery(LogQuery query, Predicate<String> readable);
+
+    /**
+     * Indices of the scope under {@code prefix} that the policy accepts, by name, starting after {@code after} (exclusive,
+     * null for the first page). At most {@code limit} rows; {@code lastName} of the page is set when more follow.
+     */
+    IndexPage listIndices(String prefix, @Nullable String after, int limit, Predicate<String> readable);
+
+    /** Fields of the index {@link #resolveIndex} returned. */
+    IndexMapping getIndexMapping(String index);
+
+    /** Cluster-wide health. */
+    ClusterHealth clusterHealth();
 }
