@@ -1,54 +1,72 @@
 # Thin wrapper: all logic is in ci/run.sh.
-# A pull request runs unreviewed code: its job holds no secret (MCP_MAVEN_REPOSITORY_URL is a repository variable, not a
-# secret, and the registry is read anonymously) and mounts no Docker socket. The main branch gets the registry
-# credentials (secrets MCP_MAVEN_REPOSITORY_USER and MCP_MAVEN_REPOSITORY_PASSWORD, kept in the environment ci-main so that
-# a pull request cannot read them) and builds the image on the runner.
+# No job holds a write permission and no secret is used: the platform artifacts (mcp-contracts, mcp-platform-starter) are
+# read from GitHub Packages (MCP_MAVEN_REPOSITORY_URL is a repository variable) with the GITHUB_TOKEN of the run, which
+# carries packages: read only (the package must grant access to this repository). A pull request runs unreviewed code
+# without the Docker socket. The image job builds the image from the jar of the verify job and pushes nothing.
 name: ci
 on:
   push:
     branches: [main]
   pull_request:
-permissions:
-  contents: read
+permissions: {}
 jobs:
   verify-pull-request:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: read
     container:
-      image: maven:3.9.12-eclipse-temurin-25
+      image: maven:3.9.12-eclipse-temurin-25@sha256:4f82a03a7d6679281952d628131299b1be88d7030a49c6a2b7d2ba2642e44e3e
     env:
       MCP_MAVEN_REPOSITORY_URL: ${{ vars.MCP_MAVEN_REPOSITORY_URL }}
+      MCP_MAVEN_REPOSITORY_USER: ${{ github.actor }}
+      MCP_MAVEN_REPOSITORY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
       - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - run: ci/run.sh verify
   verify-main:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
-    environment: ci-main
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: read
     container:
-      image: maven:3.9.12-eclipse-temurin-25
+      image: maven:3.9.12-eclipse-temurin-25@sha256:4f82a03a7d6679281952d628131299b1be88d7030a49c6a2b7d2ba2642e44e3e
     env:
       MCP_MAVEN_REPOSITORY_URL: ${{ vars.MCP_MAVEN_REPOSITORY_URL }}
-      MCP_MAVEN_REPOSITORY_USER: ${{ secrets.MCP_MAVEN_REPOSITORY_USER }}
-      MCP_MAVEN_REPOSITORY_PASSWORD: ${{ secrets.MCP_MAVEN_REPOSITORY_PASSWORD }}
+      MCP_MAVEN_REPOSITORY_USER: ${{ github.actor }}
+      MCP_MAVEN_REPOSITORY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
       - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - run: ci/run.sh verify
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: build
           path: |
             mcp-app/target/mcp-*.jar
             mcp-app/target/mcp-manifest.json
+          if-no-files-found: error
   image:
     needs: verify-main
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: build
           path: mcp-app/target

@@ -437,7 +437,7 @@ potrzebują kontenerów, a rejestr Maven z artefaktami platformy (`MCP_MAVEN_REP
 czytany anonimowo (`.ci/settings-anonymous.xml`). Dane dostępu (`MCP_MAVEN_REPOSITORY_USER`, `_PASSWORD`; w GitLabie
 zmienne Protected i Masked, w Jenkinsie poświadczenie `mcp-maven-registry`) widzi tylko gałąź `main`, na której działa też
 krok `image` (runner z gniazdem Dockera; w GitLabie tag `docker-socket` musi należeć do runnera chronionego (protected),
-inaczej gniazdo trafiłoby w ręce merge requestu; w GitHubie sekrety są w Environment `ci-main`). Moduły z wymaganymi
+inaczej gniazdo trafiłoby w ręce merge requestu; w GitHubie rejestr czyta `GITHUB_TOKEN` przebiegu z `packages: read`, bez sekretów i bez PAT). Moduły z wymaganymi
 testami: `CI_TEST_MODULES` (domyślnie `mcp-application mcp-integration mcp-tools mcp-app`), dolna granica dla `mcp-app`: `CI_APP_MIN_TESTS` (20).
 Rejestracja manifestu w gateway'u (`PUT` z certyfikatem `mcp-registry-ci-mcp-opensearch`) jest osobnym krokiem pipeline'u
 serwera, bo wymaga sekretu, którego repo nie zawiera.
