@@ -12,6 +12,8 @@ Niezmienniki platformy (`mcp-platform-plan/00-overview.md`) i to, gdzie serwer j
 | Wyszukiwanie tylko w zakresie (CC-160) | żaden wzorzec z argumentu ani `p-*` nie idzie do wyszukiwania, `_count` ani agregacji: `GET _resolve/index` z wyrażeniem zakresu (bez cache), `scope.opensearchSearchTarget` (bez aliasów i strumieni), prefiks z argumentu wybiera nazwy, żądanie nazywa je jedna po drugiej; filtr `_index` w zapytaniu, odrzucanie trafień spoza zakresu; bez `_msearch`, `_mget`, skryptów, `?q=`. Opis: README, "Zakres indeksów" |
 | Treść systemu to dane | każda wartość i nazwa z dokumentu w `data` to `UntrustedText` (`kind: untrusted-data`, CC-072) po `TextHygiene.normalize` i cięciu, bez escapowania (klient nie renderuje HTML), limity długości, liczby wpisów i rozmiaru wyniku (`UntrustedValues`, `SearchLogsResult`); `id` i `timestamp` tylko w kształcie przyjmowanym przez narzędzia |
 | Nazwa argumentu od klienta nie trafia do logu | walidację argumentów robi starter (alpha-6) bez echa nazw i wartości. Test: `anUnknownArgumentNameCannotForgeALogLine` |
+| Kursor nie ujawnia ukrytych trafień | pozycja `search_after` pochodzi z ostatniego trafienia, które wywołujący dostaje (trafienia odrzucone przez politykę są usuwane przed zbudowaniem kursora); kursor jest szyfrowany i związany z `sub`, narzędziem i zapytaniem. Test: `aCursorHoldsNoSortValueNorIdOfAHitTheCallerMayNotSee` |
+| Nowe narzędzia nie czytają poza zakresem | `get_index_mapping` i `get_document` rozwiązują indeks konkretnie (`ScopedIndices.argument`: alias, strumień, indeks ukryty i poza zakresem to `not_found_or_denied`) i sprawdzają zakres przed odczytem; `count_logs`, `validate_query` i `list_indices` pytają tylko o indeksy zakresu dopuszczone polityką. Testy: `theMappingOfARestrictedMissingOrForeignIndexAnswersTheSame`, `theIndexListNeverShowsWhatTheScopeOrThePolicyExcludes` |
 | Audyt z `requestId` | jedno zdarzenie C8 `tool_call` na wywołanie (logger `pl.aiwcorpo.mcp.audit`, stdout, czysta linia JSON), `requestId` z JWT |
 
 ## Zasady dla kodu
@@ -27,7 +29,7 @@ Niezmienniki platformy (`mcp-platform-plan/00-overview.md`) i to, gdzie serwer j
 - Profil `dev` (klucze testowe, bez mTLS) jest w jarze, ale wstaje tylko na adresie pętli zwrotnej (starter
   3.0.0-alpha-5, test `DevProfileLoopbackTest`). Serwer, do którego łączy się gateway, działa wyłącznie w
   konfiguracji bazowej.
-- Serwer nie ma konta w systemie. Poświadczenie `service-account` jest odrzucane (`credential_required`):
+- Serwer nie ma konta w systemie ani sekretu (sonda wersji pyta anonimowo). Poświadczenie `service-account` jest odrzucane (`credential_required`):
   zastąpiłoby DLS/FLS użytkownika w OpenSearch uprawnieniami konta technicznego.
 - DLS/FLS w OpenSearch to druga warstwa za kontrolami serwera (README, "DLS/FLS w OpenSearch").
 - Hinty MCP (`readOnlyHint`, `destructiveHint`) są informacją dla klienta, nie zabezpieczeniem.

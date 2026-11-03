@@ -12,7 +12,7 @@
 #   ci/run.sh image           docker build of the jar that verify made; main branch only, needs a Docker daemon
 #
 # CI_TEST_MODULES (default: mcp-application mcp-integration mcp-tools mcp-app) lists the modules that must have run tests, CI_APP_MIN_TESTS the
-# floor for mcp-app, CI_IMAGE_TAG_PREFIX (default m5) the prefix of the image tag mcp-server-<system>:<prefix>-<sha7>.
+# floor for mcp-app, CI_IMAGE_TAG_PREFIX (default m6) the prefix of the image tag mcp-server-<system>:<prefix>-<sha7>.
 # Any other argument is an error (exit 2). The tests need no container runtime, so a merge request pipeline mounts no
 # Docker socket and holds no secret: without the credentials of the registry the build reads it anonymously.
 set -euo pipefail
@@ -129,7 +129,7 @@ image() {
     echo "ci/run.sh image: mcp-app/target/mcp-opensearch.jar is missing; run ci/run.sh verify first" >&2
     exit 1
   fi
-  local tag="mcp-server-opensearch:${CI_IMAGE_TAG_PREFIX:-m5}-$(git rev-parse --short=7 HEAD)"
+  local tag="mcp-server-opensearch:${CI_IMAGE_TAG_PREFIX:-m6}-$(git rev-parse --short=7 HEAD)"
   docker build -t "$tag" .
   echo "ci/run.sh: built $tag"
 }

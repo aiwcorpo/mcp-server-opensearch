@@ -117,11 +117,14 @@ CC-214; alias o nazwie z zakresu może prowadzić do indeksów innego zespołu, 
 ### Stronicowanie
 
 `search_logs` stronicuje przez `search_after`, a `list_indices` przez nazwę ostatniego indeksu. Kursor to `CursorCodec` startera:
-podpisany HMAC, związany z `sub` wywołującego, narzędziem i odciskiem zapytania (prefiks, tekst, filtry, zakres czasu, `size`), ważny
-15 minut. Kursor innego użytkownika, innego narzędzia, zmienionego zapytania, sfałszowany i przeterminowany kończy się tym samym
+szyfrowany (AES-256-GCM, od beta-13) i uwierzytelniony, związany z `sub` wywołującego, narzędziem i odciskiem zapytania (prefiks, tekst, filtry,
+zakres czasu, `size`), ważny 15 minut. Kursor innego użytkownika, innego narzędzia, zmienionego zapytania, sfałszowany i przeterminowany kończy się tym samym
 `invalid_argument`. Kursor niesie tylko pozycję; zakres wywołującego liczy się od nowa na każdej stronie, a politykę stosuje się do
-każdej strony, więc kursor niczego nie poszerza. Strona może być krótsza albo pusta i mieć `nextCursor` (trafienia spoza zakresu i z indeksów
-`restricted` znikają bez śladu).
+każdej strony, więc kursor niczego nie poszerza. Pozycja pochodzi zawsze z ostatniego trafienia, które wywołujący dostaje: serwer odrzuca
+trafienia, których polityka nie dopuszcza (indeks z tagiem `restricted`), zanim zbuduje kursor, i dopełnia stronę kolejnymi stronami OpenSearch
+(najwyżej 5 odczytów na wywołanie). Gdy w tych 5 odczytach nie zostanie żadne dozwolone trafienie, kursor wskazuje koniec ostatniej odczytanej
+strony i nic nie jest zwracane; to jedyny przypadek, w którym pozycja może należeć do ukrytego dokumentu, a szyfrowanie kursora zamyka jej odczyt
+przez klienta. Strona może być krótsza niż `size` tylko przy końcu danych albo po wyczerpaniu odczytów.
 
 `search_logs` sortuje po polu czasu malejąco, a potem po polu o unikalnej wartości w każdym dokumencie (`MCP_OPENSEARCH_TIEBREAKER_FIELD`,
 np. `event.id`: pole `keyword` albo liczba). Bez drugiego klucza dokumenty o tym samym czasie ginęłyby na granicy stron. To nie może być `_id`
@@ -145,11 +148,12 @@ użytkownika i czyta tylko `version.number` i `version.distribution`.
 | 401 lub 403 | `degraded`, bez wersji | jak wyżej |
 | brak wersji, nieczytelna odpowiedź, błąd sieci, 5xx | `unavailable` | brak (narzędzia rozszerzone odmawiają; podstawowe próbują i kończą się błędem sieci, jeśli systemu nie ma) |
 
-Klaster z wtyczką Security zwykle odpowiada 401 na anonimowe `GET /`. Wtedy serwer jest `degraded`: nic się nie psuje, ale `list_indices`,
-`validate_query` i `get_cluster_health` odmawiają. Żeby sonda poznała wersję, ustaw `MCP_OPENSEARCH_PROBE_AUTHORIZATION` na pełną
-wartość nagłówka `Authorization` konta, które może wykonać `GET /` (uprawnienie `cluster:monitor/main`). Ten nagłówek idzie wyłącznie z
-sondą, nigdy z wywołaniem narzędzia, i nie jest drukowany (`toString` właściwości go pomija). To jedyny sekret serwera;
-poświadczenie użytkownika nadal przychodzi od gateway'a.
+Klaster z wtyczką Security zwykle odpowiada 401 na anonimowe `GET /`. Serwer nie trzyma własnego poświadczenia (poświadczenia
+użytkowników przychodzą od gateway'a), więc sonda nie może się zalogować i stan to `degraded`: nic się nie psuje, ale `list_indices`,
+`validate_query` i `get_cluster_health` odmawiają. Jeśli klaster jest OpenSearch 2.x lub 3.x, ustaw `MCP_OPENSEARCH_ASSUME_TESTED_VERSION=true`:
+przy odpowiedzi 401 lub 403 sonda zgłosi wtedy `supported` z wersją `unknown` (odpowiedź z inną dystrybucją, np. Elasticsearch, nadal jest
+`degraded`). To oświadczenie operatora, nie odczyt; wersję sprawdzisz sam (niżej, "Pierwsze uruchomienie"). Poświadczenie serwisowe dla sondy
+byłoby decyzją brokera (CC-215).
 
 Do pierwszej odpowiedzi sondy (zwykle sekundy po starcie) system jest `unavailable`, więc narzędzia rozszerzone odpowiadają `upstream_unavailable`.
 Stan widać w logu (`backend capability: probe=opensearch state=...`), w metryce `mcp_backend_capability{probe,state}`, w szczegółach
@@ -299,6 +303,9 @@ lokalne, niżej) wyłącza TLS i daje ułatwienia, które starter odrzuca poza `
 | `MCP_INTERNAL_URL` | opis serwera w manifeście (`GET /mcp-manifest`) | wymagane |
 | `MCP_OPENSEARCH_RESULT_FIELDS` | jedyne pola `_source` w wyniku (bez wieloznaczników) | `@timestamp,message,log.level,service.name,host.name` |
 | `MCP_OPENSEARCH_MAX_RANGE` | najdłuższy zakres `to - from` | `7d` |
+| `MCP_OPENSEARCH_TIEBREAKER_FIELD` | pole o unikalnej wartości w każdym dokumencie (keyword albo liczba), drugi klucz sortowania `search_logs`; puste = bez stronicowania; `_id` jest odrzucane | puste |
+| `MCP_OPENSEARCH_ASSUME_TESTED_VERSION` | `true`: przy odmowie anonimowego `GET /` uznaj klaster za OpenSearch 2.x lub 3.x | `false` |
+| `MCP_CURSOR_KEY` | klucz kursorów (Base64, co najmniej 32 bajty, ten sam w każdej instancji; sekret) | puste (klucz losowy, ostrzeżenie w logu) |
 | `MCP_REDIS_HOST`, `MCP_REDIS_PORT`, `MCP_REDIS_USER`, `MCP_REDIS_PASSWORD` | Redis dla jednorazowego `jti` (użytkownik ACL `mcp-opensearch`, klucze `jti:mcp-opensearch:*`) | `localhost`, `6379`, `mcp-opensearch`, puste |
 | `MCP_PORT`, `MCP_BIND` | port i adres nasłuchu | `8443`, `0.0.0.0` |
 
@@ -310,6 +317,90 @@ Serwer nie wstaje bez `MCP_GATEWAY_JWKS_URI`, `MCP_CONNECT_URL`, `MCP_OPENSEARCH
 `MCP_OPENSEARCH_INDEX_PREFIXES`, paczki polityk (`MCP_POLICY_*`) i plików TLS. W `dev` paczka pochodzi z
 `http://127.0.0.1:18747/policies/main/latest.json` (klucz z `mcp-policies/keys/dev/`, ścieżka względem katalogu startu).
 
+## Uprawnienia: konto użytkownika w OpenSearch i token
+
+Serwer nie ma konta w OpenSearch. Każde wywołanie idzie poświadczeniem użytkownika, które broker wymienia na token dla OpenSearch
+(`token-exchange`, `Authorization: Bearer`, jedno żądanie, bez cache). Dziś to jedyny typ; klaster bez JWT albo OIDC w Security nie
+zadziała z tym serwerem, a obsługa Basic czeka na decyzję (CC-213).
+
+Wymagania wobec klastra: wtyczka Security z uwierzytelnianiem JWT albo OpenID Connect, które przyjmuje token brokera (`aud`, klucze JWKS,
+nagłówek, `subject_key`, `roles_key` zależą od ustawień brokera i klastra; szczegółów nie potwierdziliśmy na żywym klastrze). Token musi
+uwierzytelniać tego samego użytkownika, z rolami (backend roles) mapowanymi na role OpenSearch. Zakresów OAuth poza tym nie używamy.
+
+Uprawnienia roli użytkownika w OpenSearch (nazwy akcji według wtyczki Security; sprawdź na pierwszym uruchomieniu, bo różnią się między wydaniami):
+
+| Narzędzie | Wywołanie OpenSearch | Uprawnienie roli |
+| --- | --- | --- |
+| wszystkie na indeksach | `GET _resolve/index/...` | `indices:admin/resolve/index` |
+| `search_logs`, `aggregate_logs`, `count_logs` | `POST {indeksy}/_search` | `indices:data/read/search*` na indeksach |
+| `get_document` | `GET {indeks}/_doc/{id}` | `indices:data/read/get` |
+| `get_index_mapping` | `GET {indeks}/_mapping` | `indices:admin/mappings/get` |
+| `validate_query` | `POST {indeksy}/_validate/query` | `indices:admin/validate/query` |
+| `list_indices` | `GET _cat/indices/{indeksy}` | `indices:monitor/stats`, `cluster:monitor/state`, `cluster:monitor/health` (do potwierdzenia) |
+| `get_cluster_health` | `GET _cluster/health` | `cluster:monitor/health` |
+| sonda wersji | `GET /` (bez użytkownika) | konto nie jest potrzebne, o ile klaster pozwala na anonimowe `GET /` |
+
+Zalecane `do_not_fail_on_forbidden: true` w roli, żeby lista indeksów z jednym zabronionym zwracała resztę zamiast 403. DLS i FLS roli
+działają jako druga warstwa za kontrolami serwera.
+
+Uprawnienia platformy (C9): grupa `mcp-opensearch-read` (wszystkie narzędzia są `READ_ONLY`) i zakresy `mcp-opensearch-idx-<prefiks>`
+w paczce polityk. `get_cluster_health` i `get_backend_info` nie wskazują indeksu, a pierwszy z nich opisuje cały klaster; paczka polityk
+powinna dawać je osobnej grupie (reguła po nazwie narzędzia), a nie każdemu czytelnikowi logów.
+
+## Instalacja
+
+Serwer jest jednym jarem (`mcp-app/target/mcp-opensearch.jar`, `./mvnw verify`, JDK 25) albo obrazem z `Dockerfile`. Linux i macOS z bash 3.2 lub
+nowszym; Windows tylko przez WSL2. Artefakty platformy (`mcp-platform-bom`, kontrakty) pochodzą z GitHub Packages organizacji `aiwcorpo`
+albo z `~/.m2` (opis w README `mcp-starter-lib`, "Instalacja").
+
+VM z systemd (zalecane): `deploy/scripts/install.sh mcp-app/target/mcp-opensearch.jar`, plik środowiska z
+`deploy/systemd/mcp-opensearch.env.template`, magazyny PKCS12, potem `systemctl enable --now mcp-opensearch`. Kroki, układ plików i typowe
+problemy: `docs/operations/deployment-vm-systemd.md`.
+
+Kontener: `docker build -t mcp-opensearch:<tag> .` po `./mvnw verify` (obraz `eclipse-temurin:25-jre`, użytkownik `mcp`, port 8443, mTLS).
+Certyfikaty, klucze polityk i zmienne z tabeli "Konfiguracja" dostają przez montowane pliki i środowisko; profil `dev` w kontenerze jest
+odrzucany przez starter. Obraz CI: `ci/run.sh image` (tag `mcp-server-opensearch:<prefiks>-<sha7>`, tylko `main`).
+
+Manifest do rejestracji w gateway'u to plik budowy `mcp-app/target/mcp-manifest.json` (każda zmiana narzędzi zmienia `definitionHash`
+i wymaga ponownego zatwierdzenia w gateway'u).
+
+## Codzienna obsługa
+
+- Zdrowie: `deploy/scripts/healthcheck.sh` (mTLS); stan zdolności backendu w `/actuator/health` (`backendCapability`, z JWT), w metryce
+  `mcp_backend_capability{probe="opensearch",state}` i w logu przy zmianie (`backend capability: probe=opensearch state=...`).
+  Stan `degraded` albo `unavailable` nie zdejmuje serwera z balancera.
+- Logi i audyt C8 idą na stdout (journald); audyt to linie JSON z loggera `pl.aiwcorpo.mcp.audit`.
+- Alerty: `upstream_unavailable` w audycie (OpenSearch nie odpowiada albo narzędzie wyłączone przez tryb `degraded`), `credential_required` w
+  dużej liczbie (wygasły token albo klaster przestał przyjmować tokeny brokera), `invalid_argument` z kursorem (zmiana `MCP_CURSOR_KEY` albo instancje z
+  różnymi kluczami).
+- Zmiana indeksów, które serwer ma obejmować: `MCP_OPENSEARCH_INDEX_PREFIXES` i restart; zakres użytkownika to dalej grupy z paczki polityk.
+- Aktualizacja: `deploy/scripts/update.sh <nowy.jar>` (poprzedni jar jako `.bak.<data>`), wycofanie przez przywrócenie kopii.
+- Rotacja `MCP_CURSOR_KEY`: kursory żyją 15 minut, więc zmiana klucza w tej samej chwili na wszystkich instancjach kosztuje najwyżej
+  odrzucone kursory.
+
+## Pierwsze uruchomienie u klienta (tylko odczyt)
+
+Wszystkie kroki poniżej to żądania GET i odczyty przez serwer; żaden nie zmienia klastra.
+
+1. `GET /` klastra (anonimowo i z kontem testowym): `version.distribution` ma być `opensearch`, `version.number` 2.x albo 3.x. Odpowiedź 401
+   znaczy, że sonda będzie `degraded` (ustaw `MCP_OPENSEARCH_ASSUME_TESTED_VERSION=true`, jeśli wersja się zgadza).
+2. Czy Security przyjmuje token brokera: `GET /_plugins/_security/authinfo` z tokenem użytkownika testowego pokazuje użytkownika i role.
+3. Po starcie serwera: `get_backend_info` (stan, wersja, funkcje).
+4. `list_indices` dla prefiksu klienta: indeksy w zakresie i uprawnienie `_cat` (jeśli 403 = `not_found_or_denied`, rola nie ma uprawnień monitorowania).
+5. `get_index_mapping` jednego indeksu: czy pola z `MCP_OPENSEARCH_TIMESTAMP_FIELD`, `..._QUERY_FIELDS`, `..._LEVEL_FIELD`, `..._SERVICE_FIELD`, `..._HOST_FIELD`
+   i `..._RESULT_FIELDS` istnieją i mają typ (czas: `date`; poziom, usługa, host: `keyword`). Bez tego `search_logs` i `aggregate_logs` zwrócą pusty wynik albo błąd.
+6. `validate_query` z typowym tekstem: `valid: true`; jeśli `false`, nazwy pól w konfiguracji są złe.
+7. `count_logs` z krótkim zakresem czasu, potem `search_logs` z `size` 5.
+8. Stronicowanie: ustaw `MCP_OPENSEARCH_TIEBREAKER_FIELD` na pole z unikalną wartością (`get_index_mapping` pokaże kandydata) i sprawdź drugą stronę.
+   Sortowanie po polu wymaga doc values (keyword albo liczba); `text` nie pasuje. Obciążenie klastra przy sortowaniu po tym polu sprawdź na
+   małym zakresie czasu.
+9. `get_cluster_health` (jeśli rola ma `cluster:monitor/health`).
+
+## Propozycje zmian kontraktów (zapisane, nie wdrożone)
+
+W `mcp-contracts/CONTRACT_CHANGES.md` jako `proposed`: CC-213 (Basic dla klastra bez JWT i OIDC), CC-214 (`OpenSearch::Alias` dla
+`list_aliases` i `resolve_alias`), CC-215 (poświadczenie sondy wersji). Do czasu decyzji serwer ich nie implementuje.
+
 ## CI
 
 Cała logika jest w `ci/run.sh` (`make ci` woła `ci/run.sh verify`); `.gitlab-ci.yml`, `Jenkinsfile` i `.github/workflows/ci.yml`
@@ -319,7 +410,7 @@ to cienkie nakładki, więc to samo działa lokalnie, w obrazie `maven:3.9.12-ec
 | --- | --- |
 | `ci/run.sh verify` (domyślny) | `hygiene`, `mvnw clean verify`, potem kontrola, że każdy moduł z `CI_TEST_MODULES` uruchomił testy (pominięte nie liczą się) i że powstał `mcp-app/target/mcp-manifest.json` |
 | `ci/run.sh hygiene` | cudzysłowy, spacje i wielokropek spoza ASCII oraz ślady narzędzi w źródłach (perl czyta przez `<<>>`) |
-| `ci/run.sh image` | `docker build` jaru z `verify` jako `mcp-server-opensearch:<prefiks>-<sha7>` (prefiks z `CI_IMAGE_TAG_PREFIX`, domyślnie `m5`); tylko gałąź `main`, wymaga demona Dockera |
+| `ci/run.sh image` | `docker build` jaru z `verify` jako `mcp-server-opensearch:<prefiks>-<sha7>` (prefiks z `CI_IMAGE_TAG_PREFIX`, domyślnie `m6`); tylko gałąź `main`, wymaga demona Dockera |
 
 Inny argument kończy się kodem 2. Merge request i pull request nie dostają sekretów ani gniazda Dockera: testy nie
 potrzebują kontenerów, a rejestr Maven z artefaktami platformy (`MCP_MAVEN_REPOSITORY_URL`, zwykła zmienna) jest wtedy
@@ -406,14 +497,18 @@ hosta (`mcp-gateway/scripts/run-dev-host.sh`, JWKS na `localhost:18445`) skonfig
 | `GatewayOnlyAccessTest` | bez JWT 401 (`tools/call`, `ping`, `initialize`), JWT dla innego serwera, innego narzędzia, wariant serwisowy i przeterminowany -> 401; token z claimem `vs` albo `vsc` (usunięte linki) -> 401 bez dojścia do backendu; bez JWT tylko health |
 | `ResourcePolicyTest` | indeks z tagiem `restricted`: `get_document` -> `not_found_or_denied`, wyszukiwanie -> pusty wynik jak dla brakującego; `access_denied` bez grupy odczytu (OpenSearch nietknięty); brak grantów -> pusty wynik albo `not_found_or_denied` bez żadnego zapytania; zapytanie ograniczone do przyznanego prefiksu; prefiks `logs-team-a` nie dochodzi do sąsiada `logs-team-ab` |
 | `AggregateLogsToolTest` | liczy tylko konkretne indeksy dopuszczone polityką (ścieżka żądania z nazwami); aliasy (także o nazwie prefiksu, z filtrem, prowadzące poza zakres) i strumienie nie są liczone; prefiks poza zakresem albo `restricted` -> pusty wynik bez zapytania; wzorce i listy -> `invalid_argument`; schemat |
-| `ManifestTest` | `GET /mcp-manifest` zgodny z regułami gateway'a, definicje i `definitionHash` równe `tools/list`, `resourceRefs` tylko w `get_document`, tytuły, zamknięte schematy; manifest z `ManifestExport` ma te same definicje co `tools/list`, `acceptedTypes` = `[token-exchange]`, brak `environment` poza `devstack` |
+| `ManifestTest` | `GET /mcp-manifest` zgodny z regułami gateway'a, definicje i `definitionHash` równe `tools/list`, `resourceRefs` tylko w `get_document` i `get_index_mapping`, tytuły, zamknięte schematy; manifest z `ManifestExport` ma te same definicje co `tools/list`, `acceptedTypes` = `[token-exchange]`, brak `environment` poza `devstack` |
 | `QueryScopeIndicesTest` | nazwy z odpowiedzi resolve, w której są tylko indeksy `p-2026.xx` (brak indeksu `p`); alias, strumień, indeks ukryty, sąsiad i nazwa spoza `OpenSearchIndexName` pominięte; argument tylko z listy nazw; pusty zakres bez zapytania; brak cache |
 | `QueryScopeIndexScopeProviderTest` | granty `p` -> `p,p-*`, `payments-old` poza zakresem; pusty zakres; przecięcie z konfiguracją |
 | `ProductionConfigurationTest`, `DevProfileLoopbackTest` | mTLS `need` poza `dev`; `https` poza `dev` (wyjątek: jawne `allow-plain-http`); adres bez userinfo, query i fragmentu; `dev` tylko na pętli zwrotnej |
 | `IndexDatesTest` | granice dat w nazwach (dzień, miesiąc, margines doby, przełom roku), nazwy bez daty i z datą nieistniejącą zawsze w zestawie |
 | `OpenSearchServiceTest` | prefiks wybiera `p` i `p-...` z listy nazw (nie sąsiada), polityka usuwa indeksy z zapytania i z liczników, pusta lista to pusty wynik bez wywołania, limit 100 nazw, trafienia i dokumenty spoza zakresu odrzucane, jedno rozwiązanie na trafienia jednego wyszukiwania (bez Springa) |
 
-`StubBackend` odpowiada kształtami REST API OpenSearch 2.x (`_resolve/index`, `_search`, `_doc`), łącznie z
+| `ExtendedToolsTest` | `count_logs`, `list_indices`, `get_index_mapping`, `validate_query`, `get_cluster_health`, `get_backend_info` na fixtures 2.19 i 3.x: żądania (ścieżki z nazwami, ciała), zakres, wyniki; strony i wiązanie kursora z zapytaniem, użytkownikiem i narzędziem; mapowanie aliasu, indeksu `restricted`, cudzego i brakującego = ten sam błąd bez wywołania `_mapping`; brak poświadczenia; sonda pyta anonimowo |
+| `SearchLogsPagingTest` | sortowanie z drugim kluczem, `search_after` z pozycji ostatniego zwróconego trafienia, kursor bez wartości sortowania i id ukrytego dokumentu, odrzucone kursory (inne zapytanie, rozmiar, użytkownik, sfałszowany) nie dochodzą do OpenSearch, kursor nie poszerza zakresu |
+| `DegradedBackendTest`, `AssumedVersionTest`, `CapabilityProbeTest`, `OpenSearchCapabilityProbeTest` | tryb `degraded` przy 401 na `GET /` (narzędzia rozszerzone odmawiają bez wywołania, podstawowe działają), oświadczenie operatora, klasyfikacja wersji (granice 2.0 i 3.x, 1.x, 4.x, Elasticsearch, odpowiedź bez wersji) |
+
+`StubBackend` odpowiada kształtami REST API OpenSearch 2.19 i 3.x (`GET /`, `_resolve/index`, `_search`, `_doc`, `_cat/indices`, `_mapping`, `_validate/query`, `_cluster/health`; treści zależne od wersji w `opensearch-fixtures/`), łącznie z
 aliasami (o nazwie przyznanego prefiksu i prowadzącymi do cudzego zespołu), data streamem z indeksami `.ds-`, indeksem
 ukrytym, 404 resolve dla pustego klastra oraz nieczytelną, przekierowaną, wolną i za dużą odpowiedzią (usterki wybiera
 poświadczenie, bo model nie wpływa na ścieżkę resolve); zapisuje ścieżki w postaci z drutu. Nie jest to prawdziwy klaster (STATUS.md).

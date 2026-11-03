@@ -1,5 +1,21 @@
 # STATUS - mcp-server-opensearch (ws-04)
 
+M6 etap 3: pełny katalog tylko do odczytu (2026-11-03) - starter 3.0.0-beta-13 (kontrakty 6.2.1), dziewięć narzędzi (`search_logs`, `aggregate_logs`, `get_document` oraz nowe `count_logs`, `list_indices`, `get_index_mapping`, `validate_query`, `get_cluster_health`, `get_backend_info`), `search_logs` i `list_indices` na `PagedResult` i `CursorCodec`, `search_after` z polem `MCP_OPENSEARCH_TIEBREAKER_FIELD` (wyłączone, dopóki nie ustawione; `_id` odrzucane), kursor z pozycji ostatniego trafienia widocznego dla wywołującego, `OpenSearchCapabilityProbe` (`GET /` anonimowo; 2.x i 3.x `supported`, reszta `degraded`; `MCP_OPENSEARCH_ASSUME_TESTED_VERSION`), fixtures 2.19 i 3.x w `StubBackend`, porządki repozytorium (LICENSE, NOTICE, SECURITY.md, CONTRIBUTING.md, CHANGELOG.md, licencja w pom), obraz `mcp-server-opensearch:m6-<sha7>` (prefiks w `ci/run.sh`); 174 testy (application 24, integration 21, tools 6, app 123), 0 błędów.
+
+## M6 etap 3: decyzje i otwarte punkty
+
+- Fixtures nie są nagraniami: nie było klastra ani zgody na pobranie obrazów. Kształty odpowiedzi pochodzą z dokumentacji; do wymiany na nagrania (WireMock, anonimizacja).
+- `search_after` i tiebreaker: dokumentacja OpenSearch odradza `_id` (brak doc values, unikalny tylko w indeksie), więc stronicowanie wymaga pola z konfiguracji; zachowanie sortowania po tym polu na dużym klastrze do sprawdzenia przy pierwszym uruchomieniu.
+- Sonda nie trzyma sekretu (zasada startera). Klaster z Security odpowiada 401 na `GET /`, więc bez `MCP_OPENSEARCH_ASSUME_TESTED_VERSION` serwer jest `degraded` i `list_indices`, `validate_query`, `get_cluster_health` odmawiają.
+- Nie zrobione, bo wymaga kontraktu: Basic (CC-213), `list_aliases` i `resolve_alias` (CC-214), poświadczenie sondy (CC-215).
+- Nazwy akcji uprawnień roli OpenSearch w README (sekcja "Uprawnienia") nie zostały sprawdzone na żywym klastrze.
+- `get_cluster_health` i `get_backend_info` nie mają zasobu; paczka polityk (ws-09) powinna dawać je osobnej grupie.
+
+## Propozycje CC
+
+CC-213, CC-214, CC-215 w `mcp-contracts/CONTRACT_CHANGES.md` (proposed).
+
+
 M5: kod gotowy (2026-10-31)
 
 M4: osiągnięty (2026-10-29) - serwer na starterze 3.0.0-beta-9 (kontrakty 4.1.0): `accepted-credential-types: [token-exchange]` (adapter przyjmuje tylko `token-exchange` + `Bearer`, token używany w jednym żądaniu, bez cache), CC-160 (do OpenSearch idzie tylko `GET _resolve/index` z wyrażeniem zakresu, wyszukiwanie i agregacje na liście nazw z `opensearchSearchTarget`, bez aliasów i strumieni, `get_document` przez `resolveIndexArgument`; `index_prefix` (dawniej `index_pattern`) to prefiks `OpenSearchIndexPrefix` bez obejścia; `requireNoAliases` usunięte), `aggregate_logs` działa na konkretnych indeksach i nie liczy aliasów, stały tekst `not_found_or_denied`, manifest jako artefakt budowy `mcp-app/target/mcp-manifest.json`, README z licznikiem `mcp_audit_authentication_suppressed_total`; wybór indeksów po dacie w nazwie względem `from`-`to`; 124 testów (mcp-application 18, mcp-integration 18, mcp-tools 3, mcp-app 85 + 7 w wykonaniu `manifest-artifact`), 0 błędów.

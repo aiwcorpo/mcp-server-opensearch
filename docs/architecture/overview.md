@@ -45,3 +45,8 @@ tryb ASYNC.
   programisty.
 - Adapter nie podąża za przekierowaniami i nie czyta treści błędów systemu.
 - Ponawianie i circuit breaker w adapterze: M2 template'u (teraz tylko timeouty).
+- Tylko odczyt, bez narzędzia "dowolne API": model podaje wartości, zapytanie, nazwy indeksów i ciało buduje serwer.
+- Wersje: `OpenSearchCapabilityProbe` czyta `GET /` anonimowo (serwer nie ma sekretu); 2.x i 3.x to `supported`, reszta `degraded`, w którym
+  narzędzia wymagające sprawdzonych API (`list_indices`, `validate_query`, `get_cluster_health`) odmawiają. Wywołania są wspólne dla 2.x i 3.x,
+  więc nie ma adapterów per wersja.
+- Stronicowanie `search_logs` przez `search_after` z polem o unikalnej wartości (nie `_id`) i kursorem `CursorCodec`; wyłączone, dopóki pole nie jest ustawione.
