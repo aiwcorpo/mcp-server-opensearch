@@ -22,6 +22,6 @@ public class ApplicationWiringConfiguration {
 
     @Bean
     SearchLimits searchLimits(OpenSearchSearchProperties search) {
-        return new SearchLimits(search.maxRange());
+        return new SearchLimits(search.maxRange(), search.callBudget());
     }
 }

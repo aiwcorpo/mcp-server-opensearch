@@ -17,7 +17,7 @@ import pl.aiwcorpo.mcp.opensearch.core.domain.LogPage;
 import pl.aiwcorpo.mcp.opensearch.core.domain.QueryCheck;
 import pl.aiwcorpo.mcp.opensearch.core.domain.IndexDocument;
 import pl.aiwcorpo.mcp.opensearch.core.domain.IndexScope;
-import pl.aiwcorpo.mcp.opensearch.core.domain.LogBucket;
+import pl.aiwcorpo.mcp.opensearch.core.domain.LogBuckets;
 import pl.aiwcorpo.mcp.opensearch.core.domain.LogQuery;
 import pl.aiwcorpo.mcp.opensearch.core.port.out.OpenSearchPort;
 import pl.aiwcorpo.mcp.platform.resource.QueryScope;
@@ -77,7 +77,7 @@ class QueryScopeIndicesTest {
         }
 
         @Override
-        public List<LogBucket> aggregate(List<String> indices, IndexScope scope, AggregateQuery query) {
+        public LogBuckets aggregate(List<String> indices, IndexScope scope, AggregateQuery query) {
             throw new AssertionError();
         }
 

@@ -14,7 +14,7 @@ import pl.aiwcorpo.mcp.opensearch.core.domain.LogCount;
 import pl.aiwcorpo.mcp.opensearch.core.domain.LogPage;
 import pl.aiwcorpo.mcp.opensearch.core.domain.QueryCheck;
 import org.jspecify.annotations.Nullable;
-import pl.aiwcorpo.mcp.opensearch.core.domain.LogBucket;
+import pl.aiwcorpo.mcp.opensearch.core.domain.LogBuckets;
 import pl.aiwcorpo.mcp.opensearch.core.domain.LogQuery;
 import pl.aiwcorpo.mcp.opensearch.core.domain.ResolvedIndex;
 
@@ -37,7 +37,7 @@ public interface OpenSearchUseCase {
      *
      * @throws pl.aiwcorpo.mcp.opensearch.core.domain.TooManyIndicesException when more indices are readable than one request names
      */
-    List<LogBucket> aggregateLogs(AggregateQuery query, Predicate<String> readable);
+    LogBuckets aggregateLogs(AggregateQuery query, Predicate<String> readable);
 
     /**
      * The index named by {@code index} when it is a concrete index the caller may see inside the scope; empty for

@@ -1,6 +1,6 @@
 # STATUS - mcp-server-opensearch (ws-04)
 
-M6 etap 3: pełny katalog tylko do odczytu (2026-11-03) - starter 3.0.0-beta-13 (kontrakty 6.2.1), dziewięć narzędzi (`search_logs`, `aggregate_logs`, `get_document` oraz nowe `count_logs`, `list_indices`, `get_index_mapping`, `validate_query`, `get_cluster_health`, `get_backend_info`), `search_logs` i `list_indices` na `PagedResult` i `CursorCodec`, `search_after` z polem `MCP_OPENSEARCH_TIEBREAKER_FIELD` (wyłączone, dopóki nie ustawione; `_id` odrzucane), kursor z pozycji ostatniego trafienia widocznego dla wywołującego, `OpenSearchCapabilityProbe` (`GET /` anonimowo; 2.x i 3.x `supported`, reszta `degraded`; `MCP_OPENSEARCH_ASSUME_TESTED_VERSION`), fixtures 2.19 i 3.x w `StubBackend`, porządki repozytorium (LICENSE, NOTICE, SECURITY.md, CONTRIBUTING.md, CHANGELOG.md, licencja w pom), obraz `mcp-server-opensearch:m6-<sha7>` (prefiks w `ci/run.sh`); 174 testy (application 24, integration 21, tools 6, app 123), 0 błędów.
+M6 etap 3: pełny katalog tylko do odczytu (2026-11-03) - starter 3.0.0-beta-13 (kontrakty 6.2.1), dziewięć narzędzi (`search_logs`, `aggregate_logs`, `get_document` oraz nowe `count_logs`, `list_indices`, `get_index_mapping`, `validate_query`, `get_cluster_health`, `get_backend_info`), `search_logs` i `list_indices` na `PagedResult` i `CursorCodec`, `search_after` z polem `MCP_OPENSEARCH_TIEBREAKER_FIELD` (wyłączone, dopóki nie ustawione; `_id` odrzucane), kursor z pozycji ostatniego trafienia widocznego dla wywołującego, `OpenSearchCapabilityProbe` (`GET /` anonimowo; 2.x i 3.x `supported`, reszta `degraded`; `MCP_OPENSEARCH_ASSUME_TESTED_VERSION`), fixtures 2.19 i 3.x w `StubBackend`, porządki repozytorium (LICENSE, NOTICE, SECURITY.md, CONTRIBUTING.md, CHANGELOG.md, licencja w pom), obraz `mcp-server-opensearch:m6-<sha7>` (prefiks w `ci/run.sh`); 182 testy (application 24, integration 21, tools 6, app 131), 0 błędów.
 
 ## M6 etap 3: decyzje i otwarte punkty
 
@@ -10,6 +10,8 @@ M6 etap 3: pełny katalog tylko do odczytu (2026-11-03) - starter 3.0.0-beta-13 
 - Nie zrobione, bo wymaga kontraktu: Basic (CC-213), `list_aliases` i `resolve_alias` (CC-214), poświadczenie sondy (CC-215).
 - Nazwy akcji uprawnień roli OpenSearch w README (sekcja "Uprawnienia") nie zostały sprawdzone na żywym klastrze.
 - `get_cluster_health` i `get_backend_info` nie mają zasobu; paczka polityk (ws-09) powinna dawać je osobnej grupie.
+
+- Po przeglądzie (Ś1-Ś4, N1-N13): usunięte `docs.count` i `store.size`, mapowanie tylko z pól konfiguracji, testy wielu odczytów `search_logs`, limity czasu z konfiguracji i budżet wywołania, spójne `requireFeature`, `otherDocuments`, `unmapped_type` tiebreakera, wersja `exec-maven-plugin`. Nie zrobione: `distributionManagement` i SBOM (przy pierwszym wydaniu), nagrania zamiast fixtures, sprawdzenie `explain` przy DLS na klastrze.
 
 ## Propozycje CC
 

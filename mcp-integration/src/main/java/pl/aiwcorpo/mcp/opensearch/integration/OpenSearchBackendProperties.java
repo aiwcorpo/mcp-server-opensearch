@@ -27,6 +27,6 @@ public record OpenSearchBackendProperties(String baseUrl, String sslBundle, Dura
     public OpenSearchBackendProperties {
         connectTimeout = connectTimeout == null ? Duration.ofSeconds(2) : connectTimeout;
         readTimeout = readTimeout == null ? Duration.ofSeconds(10) : readTimeout;
-        maxResponseSize = maxResponseSize == null ? DataSize.ofMegabytes(1) : maxResponseSize;
+        maxResponseSize = maxResponseSize == null ? DataSize.ofMegabytes(4) : maxResponseSize;
     }
 }

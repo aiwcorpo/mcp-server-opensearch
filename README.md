@@ -57,13 +57,13 @@ Dziewięć narzędzi, wszystkie `READ_ONLY` z akcją `read`. Poświadczenie każ
 (token od brokera, używany w jednym żądaniu, bez cache). Uprawnienie (C9): grupa `mcp-opensearch-read`; narzędzia
 działające na indeksach wymagają też co najmniej jednego zakresu `mcp-opensearch-idx-<prefiks>`.
 
-| Narzędzie (tytuł) | Ryzyko | Akcja | Uprawnienie | `@ResourceRef` | Co robi |
+| Narzędzie (tytuł) | Ryzyko | Akcja | Uprawnienie | `resourceRefs` w manifeście (argument) / filtr wyniku | Co robi |
 | --- | --- | --- | --- | --- | --- |
-| `search_logs` ("Szukaj w logach") | `READ_ONLY` | `read` | `mcp-opensearch-read` + zakres indeksów | `OpenSearch::Index` na `index` każdego trafienia | wyszukiwanie w logach prefiksu w zakresie czasu, strony przez `cursor` |
-| `aggregate_logs` ("Zlicz logi według pola") | `READ_ONLY` | `read` | jak wyżej | brak (indeksy filtrowane przed zapytaniem) | liczba dokumentów według `level`, `service` albo `host` |
+| `search_logs` ("Szukaj w logach") | `READ_ONLY` | `read` | `mcp-opensearch-read` + zakres indeksów | argument: brak; filtr wyniku: `OpenSearch::Index` na `items[].index` | wyszukiwanie w logach prefiksu w zakresie czasu, strony przez `cursor` |
+| `aggregate_logs` ("Zlicz logi według pola") | `READ_ONLY` | `read` | jak wyżej | brak; indeksy filtrowane polityką przed zapytaniem | liczba dokumentów według `level`, `service` albo `host` |
 | `count_logs` ("Policz logi") | `READ_ONLY` | `read` | jak wyżej | brak (jak `aggregate_logs`) | liczba dokumentów spełniających filtr |
 | `get_document` ("Pobierz dokument z logów") | `READ_ONLY` | `read` | jak wyżej | argument `index`: `OpenSearch::Index` | jeden dokument po indeksie i `id` |
-| `list_indices` ("Wylistuj indeksy") | `READ_ONLY` | `read` | jak wyżej | `OpenSearch::Index` na `name` każdego wiersza | indeksy prefiksu: zdrowie, liczba dokumentów, rozmiar; strony przez `cursor` |
+| `list_indices` ("Wylistuj indeksy") | `READ_ONLY` | `read` | jak wyżej | argument: brak; filtr wyniku: `OpenSearch::Index` na `items[].name` | indeksy prefiksu ze zdrowiem (bez liczby dokumentów i rozmiaru: statystyki indeksu nie respektują DLS); strony przez `cursor` |
 | `get_index_mapping` ("Pokaż mapowanie indeksu") | `READ_ONLY` | `read` | jak wyżej | argument `index`: `OpenSearch::Index` | pola indeksu z typami |
 | `validate_query` ("Sprawdź zapytanie do logów") | `READ_ONLY` | `read` | jak wyżej | brak | czy OpenSearch przyjmuje zapytanie serwera i jak je czyta |
 | `get_cluster_health` ("Pokaż zdrowie klastra") | `READ_ONLY` | `read` | `mcp-opensearch-read`; wynik dotyczy całego klastra, więc polityka powinna go dawać osobnej grupie | brak | status, liczba węzłów i shardów, bez nazw |
@@ -87,13 +87,16 @@ Wyniki:
 
 - `search_logs`, `list_indices`: `PagedResult` platformy, `{items, nextCursor, truncated, omitted}`; bez liczników i bez `total`
   (liczba z systemu zawierałaby to, czego wywołujący nie widzi). Element `search_logs`: `{index, id, timestamp, data, truncated}`,
-  `data` to wpisy `{name, path, value}` z `path` i `value` jako `UntrustedText`. Element `list_indices`: `{name, health, documents, sizeBytes}`
-  (`null`, gdy OpenSearch nie podał, np. indeks czerwony).
-- `aggregate_logs`: `{indexPrefix, from, to, groupBy, buckets: [{key, count}]}`, `key` jako `UntrustedText`.
+  `data` to wpisy `{name, path, value}` z `path` i `value` jako `UntrustedText`. Element `list_indices`: `{name, health}`
+  (`health` jest `null`, gdy OpenSearch go nie podał). Liczby dokumentów i rozmiaru nie ma celowo: `docs.count` i `store.size` to statystyki całego indeksu,
+  DLS ich nie dotyczy, więc zdradzałyby dokumenty, których wywołujący nie widzi.
+- `aggregate_logs`: `{indexPrefix, from, to, groupBy, buckets: [{key, count}], otherDocuments}`, `key` jako `UntrustedText`; `otherDocuments` to dokumenty w grupach spoza listy (agregacja `terms`
+  zwraca największe grupy, a przy dużej liczności pola `host` liczby grup są przybliżone).
 - `count_logs`: `{indexPrefix, from, to, count, exact}`; `exact: false`, gdy OpenSearch podał dolne ograniczenie albo żądanie przekroczyło limit czasu.
 - `get_document`: `{index, id, data, truncated}`.
 - `get_index_mapping`: `{index, fields: [{path, type}], truncated}`; `path` jako `UntrustedText` (nazwy pól wymyśla ten, kto loguje),
-  do 500 pól, zagnieżdżone jako ścieżki z kropką, pola wielokrotne (`message.keyword`) osobno.
+  tylko pola, których serwer używa (czas, pola zapytania, wyniku, poziom, usługa, host, tiebreaker, razem z ich polami wielokrotnymi, np. `message.keyword`); reszta schematu
+  logów zostaje w OpenSearch. Zagnieżdżone pola jako ścieżki z kropką.
 - `validate_query`: `{valid, checked, invalidIndices, explanation}`; `explanation` to zapis Lucene pierwszego indeksu jako `UntrustedText`; tekst błędu
   z OpenSearch nie jest przekazywany.
 - `get_cluster_health`: `{status, timedOut, nodes, activeShards, relocatingShards, initializingShards, unassignedShards, activeShardsPercent}`.
@@ -113,6 +116,18 @@ tych przyczyn. Szczegóły: `docs/api/tools-catalog.md`.
 Narzędzi, które nie powstały, a które badanie API zalecało: `list_aliases` i `resolve_alias` (potrzebują typu zasobu `OpenSearch::Alias`,
 CC-214; alias o nazwie z zakresu może prowadzić do indeksów innego zespołu, więc serwer nie pokazuje aliasów w żadnej postaci), `field_caps`
 (pokrywa się z `get_index_mapping`), `run_ppl`, `sql`, `_msearch` i narzędzie "dowolne API" (poza modelem bezpieczeństwa platformy).
+
+### Ograniczenia, o których warto wiedzieć
+
+- **Data streamy nie są obsługiwane.** Indeksy zapasowe `.ds-*` mają wiodącą kropkę, a strumień i alias nie są nigdy celem zapytania. Klaster, który trzyma logi w data streamach,
+  da puste wyniki; obejściem jest alias na zwykłe indeksy po stronie klastra albo osobna decyzja (CC-214 dotyczy aliasów).
+- **Filtr daty w nazwie indeksu.** Zakres czasu odcina indeksy `p-YYYY.MM.DD` i `p-YYYY.MM` z datą poza `from`-`to` poszerzonym o dobę. Indeks rotowany według czasu przyjęcia,
+  z logami spóźnionymi o ponad dobę, wypada z zapytania, więc `count_logs` i `aggregate_logs` zwrócą mniej bez sygnału. Indeksy bez daty w nazwie są zawsze brane.
+- **Limity czasu.** Ciało `_search` ma `timeout` równy 80% `read-timeout`, żądanie `cancel_after_time_interval` 90%; `search_logs` czyta najwyżej 5 stron w czasie `MCP_OPENSEARCH_CALL_BUDGET`.
+  Odpowiedź OpenSearch może mieć do 4 MB (`max-response-size`); wynik narzędzia i tak jest cięty do 900000 B.
+- **Strona bez kursora mimo dalszych danych.** Gdy pozycja ostatniego trafienia nie mieści się w kursorze, wynik ma w `omitted` kod `cursor_unavailable`.
+- **`get_cluster_health` i `get_backend_info` pokazują dane całego klastra** (skalę shardów i węzłów, dokładną wersję). Paczka polityk (ws-09) da im osobną regułę; do tego czasu
+  grupa `mcp-opensearch-read` obejmuje je tak jak resztę narzędzi `READ_ONLY`.
 
 ### Stronicowanie
 
@@ -146,7 +161,7 @@ użytkownika i czyta tylko `version.number` i `version.distribution`.
 | `distribution: opensearch`, wersja 2.0 do 3.x | `supported` | wszystkie (`OpenSearchFeatures.TESTED`) |
 | `distribution` inna albo brak, wersja spoza 2.0 do 3.x | `degraded` | `search`, `count`, `get_document`, `mapping`, `search_after` |
 | 401 lub 403 | `degraded`, bez wersji | jak wyżej |
-| brak wersji, nieczytelna odpowiedź, błąd sieci, 5xx | `unavailable` | brak (narzędzia rozszerzone odmawiają; podstawowe próbują i kończą się błędem sieci, jeśli systemu nie ma) |
+| brak wersji, nieczytelna odpowiedź, błąd sieci, 5xx; też przed pierwszą odpowiedzią sondy | `unavailable` | brak: każde narzędzie, które woła OpenSearch, odpowiada `upstream_unavailable` bez wywołania (`get_backend_info` działa) |
 
 Klaster z wtyczką Security zwykle odpowiada 401 na anonimowe `GET /`. Serwer nie trzyma własnego poświadczenia (poświadczenia
 użytkowników przychodzą od gateway'a), więc sonda nie może się zalogować i stan to `degraded`: nic się nie psuje, ale `list_indices`,
@@ -155,7 +170,8 @@ przy odpowiedzi 401 lub 403 sonda zgłosi wtedy `supported` z wersją `unknown` 
 `degraded`). To oświadczenie operatora, nie odczyt; wersję sprawdzisz sam (niżej, "Pierwsze uruchomienie"). Poświadczenie serwisowe dla sondy
 byłoby decyzją brokera (CC-215).
 
-Do pierwszej odpowiedzi sondy (zwykle sekundy po starcie) system jest `unavailable`, więc narzędzia rozszerzone odpowiadają `upstream_unavailable`.
+Do pierwszej odpowiedzi sondy (zwykle sekundy po starcie) system jest `unavailable`, więc wszystkie narzędzia poza `get_backend_info` odpowiadają `upstream_unavailable`;
+sonda ponawia się po `capability.retry-interval` (30 s), gdy system nie odpowiada.
 Stan widać w logu (`backend capability: probe=opensearch state=...`), w metryce `mcp_backend_capability{probe,state}`, w szczegółach
 `/actuator/health` (`backendCapability`) i w narzędziu `get_backend_info`. Zdarzenia audytu zmiany stanu nie ma (CC-208).
 
@@ -228,8 +244,8 @@ Liczby i wartości logiczne są tekstem w zapisie JSON, `null` jest pomijany.
 Kolejność: wartość jako tekst, `TextHygiene.normalize` (znak sterujący lub niewidoczny zastępuje spacja), cięcie
 (`UntrustedText.cut`: wartość 2000 znaków, `path` 128), `plainCut`. Tekst nie jest escapowany: `<`, `>` i `&`
 zostają, klient nie renderuje go jako HTML (ta sama reguła w gitlab i servicedesk). Do 100 wpisów na dokument i
-głębokość 6, dalej `truncated: true` w trafieniu. Wynik `search_logs` ma budżet 250000 znaków tekstu (platforma
-odrzuca wynik ponad 1 MB): po jego przekroczeniu reszta trafień jest pomijana i `truncated: true` w wyniku.
+głębokość 6, dalej `truncated: true` w trafieniu. Wynik `search_logs` ma budżet 900000 B szacowanego JSON (platforma
+odrzuca wynik ponad 1 MiB): po jego przekroczeniu reszta trafień jest pomijana i `truncated: true` w wyniku.
 `index` to nazwa z zakresu, `id` to napis tylko wtedy, gdy ma kształt przyjmowany przez `get_document`
 (w przeciwnym razie `null`), `timestamp` tylko gdy wygląda jak data lub liczba. Pola puste są `@Nullable` w
 schemacie wyniku. Wynik nie ma liczby wszystkich trafień.
@@ -304,6 +320,8 @@ lokalne, niżej) wyłącza TLS i daje ułatwienia, które starter odrzuca poza `
 | `MCP_OPENSEARCH_RESULT_FIELDS` | jedyne pola `_source` w wyniku (bez wieloznaczników) | `@timestamp,message,log.level,service.name,host.name` |
 | `MCP_OPENSEARCH_MAX_RANGE` | najdłuższy zakres `to - from` | `7d` |
 | `MCP_OPENSEARCH_TIEBREAKER_FIELD` | pole o unikalnej wartości w każdym dokumencie (keyword albo liczba), drugi klucz sortowania `search_logs`; puste = bez stronicowania; `_id` jest odrzucane | puste |
+| `MCP_OPENSEARCH_TIEBREAKER_TYPE` | typ sortowania tiebreakera dla indeksów bez tego pola: `keyword` albo `long` (pole liczbowe) | `keyword` |
+| `MCP_OPENSEARCH_CALL_BUDGET` | czas ścienny, który jedno `search_logs` może spędzić na odczytach stron OpenSearch (najwyżej 5 odczytów) | `20s` |
 | `MCP_OPENSEARCH_ASSUME_TESTED_VERSION` | `true`: przy odmowie anonimowego `GET /` uznaj klaster za OpenSearch 2.x lub 3.x | `false` |
 | `MCP_CURSOR_KEY` | klucz kursorów (Base64, co najmniej 32 bajty, ten sam w każdej instancji; sekret) | puste (klucz losowy, ostrzeżenie w logu) |
 | `MCP_REDIS_HOST`, `MCP_REDIS_PORT`, `MCP_REDIS_USER`, `MCP_REDIS_PASSWORD` | Redis dla jednorazowego `jti` (użytkownik ACL `mcp-opensearch`, klucze `jti:mcp-opensearch:*`) | `localhost`, `6379`, `mcp-opensearch`, puste |
@@ -387,11 +405,13 @@ Wszystkie kroki poniżej to żądania GET i odczyty przez serwer; żaden nie zmi
 2. Czy Security przyjmuje token brokera: `GET /_plugins/_security/authinfo` z tokenem użytkownika testowego pokazuje użytkownika i role.
 3. Po starcie serwera: `get_backend_info` (stan, wersja, funkcje).
 4. `list_indices` dla prefiksu klienta: indeksy w zakresie i uprawnienie `_cat` (jeśli 403 = `not_found_or_denied`, rola nie ma uprawnień monitorowania).
-5. `get_index_mapping` jednego indeksu: czy pola z `MCP_OPENSEARCH_TIMESTAMP_FIELD`, `..._QUERY_FIELDS`, `..._LEVEL_FIELD`, `..._SERVICE_FIELD`, `..._HOST_FIELD`
+5. `get_index_mapping` jednego indeksu (pokazuje tylko pola z konfiguracji): czy pola z `MCP_OPENSEARCH_TIMESTAMP_FIELD`, `..._QUERY_FIELDS`, `..._LEVEL_FIELD`, `..._SERVICE_FIELD`, `..._HOST_FIELD`
    i `..._RESULT_FIELDS` istnieją i mają typ (czas: `date`; poziom, usługa, host: `keyword`). Bez tego `search_logs` i `aggregate_logs` zwrócą pusty wynik albo błąd.
-6. `validate_query` z typowym tekstem: `valid: true`; jeśli `false`, nazwy pól w konfiguracji są złe.
+6. `validate_query` z typowym tekstem: `valid: true`; jeśli `false`, nazwy pól w konfiguracji są złe. Dla roli z DLS sprawdź, czy `explanation` nie zawiera zapytania DLS
+   roli (w trybie `filter_level` objaśnienie mogłoby je pokazać); tego nie da się sprawdzić na atrapie.
 7. `count_logs` z krótkim zakresem czasu, potem `search_logs` z `size` 5.
-8. Stronicowanie: ustaw `MCP_OPENSEARCH_TIEBREAKER_FIELD` na pole z unikalną wartością (`get_index_mapping` pokaże kandydata) i sprawdź drugą stronę.
+8. Stronicowanie: ustaw `MCP_OPENSEARCH_TIEBREAKER_FIELD` na pole z unikalną wartością w każdym dokumencie (dowiedz się od zespołu logowania albo z `GET {indeks}/_mapping`
+   wykonanego ręcznie; `get_index_mapping` pokazuje tylko pola z konfiguracji) i sprawdź drugą stronę.
    Sortowanie po polu wymaga doc values (keyword albo liczba); `text` nie pasuje. Obciążenie klastra przy sortowaniu po tym polu sprawdź na
    małym zakresie czasu.
 9. `get_cluster_health` (jeśli rola ma `cluster:monitor/health`).

@@ -58,7 +58,8 @@ opensearch:
     ssl-bundle: ${MCP_OPENSEARCH_SSL_BUNDLE:}
     connect-timeout: 2s
     read-timeout: 10s
-    max-response-size: 1MB
+    # A page of 100 logs with stack traces is a few MB; the tool cuts its own result at 900 KB.
+    max-response-size: 4MB
     # Plain http outside 'dev' only for the mocks of mcp-platform-dev; never in a real deployment.
     allow-plain-http: ${MCP_OPENSEARCH_ALLOW_PLAIN_HTTP:false}
     # The version probe (GET /) is anonymous: the server holds no credential. A cluster with the Security plugin answers
@@ -85,6 +86,10 @@ opensearch:
     # Field with a different value in every document (a keyword or a number), the last sort key of search_logs. Empty
     # = no paging. Not _id: it has no doc values and is unique only within an index.
     tiebreaker-field: ${MCP_OPENSEARCH_TIEBREAKER_FIELD:}
+    # Sort type of the tiebreaker for indices that lack the field: keyword, or long for a numeric field.
+    tiebreaker-type: ${MCP_OPENSEARCH_TIEBREAKER_TYPE:keyword}
+    # Wall-clock time one search_logs call may spend reading backend pages (it reads up to 5).
+    call-budget: ${MCP_OPENSEARCH_CALL_BUDGET:20s}
 
 management:
   endpoints:

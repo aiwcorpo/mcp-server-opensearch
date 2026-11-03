@@ -44,7 +44,7 @@ class AggregateLogsToolTest extends ServerTestSupport {
             McpSchema.CallToolResult result = call(client, "aggregate_logs", arguments);
 
             assertThat(result.isError()).as(text(result)).isFalse();
-            assertThat(text(result)).contains("\"groupBy\":\"level\"", "\"count\":7", "\"text\":\"ERROR\"",
+            assertThat(text(result)).contains("\"groupBy\":\"level\"", "\"otherDocuments\":5", "\"count\":7", "\"text\":\"ERROR\"",
                     "\"text\":\"WARN <script>\"", "\"kind\":\"untrusted-data\"");
         }
         StubBackend.Request search = searchRequest();

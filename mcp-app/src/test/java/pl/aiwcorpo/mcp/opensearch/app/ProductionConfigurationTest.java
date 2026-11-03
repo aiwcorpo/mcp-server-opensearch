@@ -103,7 +103,7 @@ class ProductionConfigurationTest {
     }
 
     private static OpenSearchSearchProperties searchDefaults() {
-        return new OpenSearchSearchProperties(null, null, null, null, null, null, null, null);
+        return new OpenSearchSearchProperties(null, null, null, null, null, null, null, null, null, null);
     }
 
     @Test
@@ -133,11 +133,11 @@ class ProductionConfigurationTest {
 
     @Test
     void theTiebreakerOfPagingIsAFieldOfTheDocumentsNeverAMetadataField() {
-        assertThat(new OpenSearchSearchProperties(null, null, null, null, null, null, null, null).pagingEnabled())
+        assertThat(new OpenSearchSearchProperties(null, null, null, null, null, null, null, null, null, null).pagingEnabled())
                 .as("paging is off until a field is configured").isFalse();
-        assertThat(new OpenSearchSearchProperties(null, null, null, null, null, null, null, "event.id").pagingEnabled()).isTrue();
+        assertThat(new OpenSearchSearchProperties(null, null, null, null, null, null, null, null, null, "event.id").pagingEnabled()).isTrue();
         for (String bad : new String[] {"_id", "_doc", "event.*", "a b"}) {
-            assertThatThrownBy(() -> new OpenSearchSearchProperties(null, null, null, null, null, null, null, bad))
+            assertThatThrownBy(() -> new OpenSearchSearchProperties(null, null, null, null, null, null, null, null, null, bad))
                     .as(bad).isInstanceOf(IllegalStateException.class);
         }
     }

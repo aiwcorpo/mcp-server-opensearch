@@ -30,7 +30,7 @@ import pl.aiwcorpo.mcp.opensearch.core.domain.QueryCheck;
 import pl.aiwcorpo.mcp.opensearch.core.domain.SearchAfter;
 import pl.aiwcorpo.mcp.opensearch.core.domain.GroupBy;
 import pl.aiwcorpo.mcp.opensearch.core.domain.IndexDocument;
-import pl.aiwcorpo.mcp.opensearch.core.domain.LogBucket;
+import pl.aiwcorpo.mcp.opensearch.core.domain.LogBuckets;
 import pl.aiwcorpo.mcp.opensearch.core.domain.LogFilter;
 import pl.aiwcorpo.mcp.opensearch.core.domain.LogQuery;
 import pl.aiwcorpo.mcp.opensearch.core.domain.ResolvedIndex;
@@ -113,6 +113,7 @@ public class OpenSearchTools {
 
     private final OpenSearchUseCase useCase;
     private final Duration maxRange;
+    private final Duration callBudget;
     private final ResourcePolicy policy;
     private final OpenSearchIndexResolver indices;
     private final CursorCodec cursors;
@@ -122,6 +123,7 @@ public class OpenSearchTools {
             OpenSearchIndexResolver indices, CursorCodec cursors, BackendCapabilities capabilities) {
         this.useCase = useCase;
         this.maxRange = limits.maxRange();
+        this.callBudget = limits.callBudget();
         this.policy = policy;
         this.indices = indices;
         this.cursors = cursors;
@@ -157,6 +159,10 @@ public class OpenSearchTools {
             @ArgumentLimits(minimum = 1, maximum = MAX_SIZE) Integer size,
             @ToolParam(description = "nextCursor of the previous page of the same query", required = false)
             @ArgumentLimits(maxLength = CursorCodec.MAX_CURSOR_LENGTH, pattern = CursorCodec.ARGUMENT_PATTERN) String cursor) {
+        requireFeature(OpenSearchFeatures.SEARCH);
+        if (cursor != null) {
+            requireFeature(OpenSearchFeatures.SEARCH_AFTER);
+        }
         String prefix = validPrefix(index_prefix);
         LogFilter filter = new LogFilter(validText(text), validLevel(level), validService(service));
         Instant start = validTime("from", from);
@@ -173,7 +179,11 @@ public class OpenSearchTools {
         List<LogHit> allowed = new ArrayList<>();
         SearchAfter lastRaw = null;
         SearchAfter position = after;
+        long began = System.nanoTime();
         for (int reads = 1; reads <= MAX_READS; reads++) {
+            if (reads > 1 && System.nanoTime() - began > callBudget.toNanos()) {
+                break;
+            }
             LogPage page = useCase.searchLogs(new LogQuery(prefix, filter, start, end, count, position), readable);
             page.hits().stream().filter(hit -> readable.test(hit.index())).forEach(allowed::add);
             lastRaw = page.next();
@@ -194,7 +204,8 @@ public class OpenSearchTools {
             resume = null;
         }
         String next = resume == null ? null : cursors.issue(SEARCH_LOGS, query, resume.encode());
-        return new PagedResult<>(kept.hits(), next, kept.truncated(), List.of());
+        boolean moreWithoutCursor = resume == null && (kept.truncated() || trimmed || lastRaw != null);
+        return new PagedResult<>(kept.hits(), next, kept.truncated(), moreWithoutCursor ? List.of("cursor_unavailable") : List.of());
     }
 
     /**
@@ -204,7 +215,7 @@ public class OpenSearchTools {
      */
     @Tool(name = AGGREGATE_LOGS, description = "Counts log documents in the indices of one index prefix"
             + " within a time range, grouped by level, service or host. Returns up to size groups, the biggest first,"
-            + " each with the value and its document count. The optional text, level and service narrow the"
+            + " each with the value and its document count, and otherDocuments, the documents in groups left out. The optional text, level and service narrow the"
             + " documents as in search_logs. Aliases and data streams are not counted.")
     @ToolRisk(RiskLevel.READ_ONLY)
     @ToolTitle("Zlicz logi według pola")
@@ -225,6 +236,7 @@ public class OpenSearchTools {
             @ArgumentLimits(minLength = 20, maxLength = MAX_TIME) String to,
             @ToolParam(description = "Number of groups, 1-50, default 10", required = false)
             @ArgumentLimits(minimum = 1, maximum = MAX_BUCKETS) Integer size) {
+        requireFeature(OpenSearchFeatures.SEARCH);
         String prefix = validPrefix(index_prefix);
         GroupBy groupBy = validGroupBy(group_by);
         LogFilter filter = new LogFilter(text == null ? null : validText(text), validLevel(level), validService(service));
@@ -235,10 +247,10 @@ public class OpenSearchTools {
         if (buckets < 1 || buckets > MAX_BUCKETS) {
             throw new InvalidToolArgumentException("size must be between 1 and " + MAX_BUCKETS);
         }
-        List<LogBucket> found = useCase.aggregateLogs(
+        LogBuckets found = useCase.aggregateLogs(
                 new AggregateQuery(prefix, filter, start, end, groupBy, buckets),
                 index -> policy.allows(indices.resource(index)));
-        return AggregateLogsResult.of(prefix, start.toString(), end.toString(), groupBy.name().toLowerCase(java.util.Locale.ROOT), found);
+        return AggregateLogsResult.of(prefix, start.toString(), end.toString(), groupBy.name().toLowerCase(java.util.Locale.ROOT), found.buckets(), found.otherDocuments());
     }
 
     /**
@@ -256,6 +268,7 @@ public class OpenSearchTools {
             @ResourceRef(type = OpenSearchIndexResolver.TYPE) String index,
             @ToolParam(description = "Document id as returned by search_logs")
             @ArgumentLimits(minLength = 1, maxLength = 256, pattern = DOCUMENT_ID_REGEX) String id) {
+        requireFeature(OpenSearchFeatures.DOCUMENT);
         validIndexName(index);
         // The index the resolver fetched for the policy: the one that was judged is the one that is read.
         ResolvedIndex resolved = ResourceContext.required()
@@ -282,6 +295,7 @@ public class OpenSearchTools {
             @ArgumentLimits(minLength = 20, maxLength = MAX_TIME) String from,
             @ToolParam(description = "End of the time range, exclusive, ISO-8601 with offset, later than from")
             @ArgumentLimits(minLength = 20, maxLength = MAX_TIME) String to) {
+        requireFeature(OpenSearchFeatures.COUNT);
         LogQuery query = optionalTextQuery(index_prefix, text, level, service, from, to);
         LogCount counted = useCase.countLogs(query, index -> policy.allows(indices.resource(index)));
         return new CountLogsResult(query.prefix(), query.from().toString(), query.to().toString(), counted.count(),
@@ -289,7 +303,7 @@ public class OpenSearchTools {
     }
 
     @Tool(name = LIST_INDICES, description = "Lists the indices of one index prefix that the caller may read, by"
-            + " name: health, document count and size on disk. Pass nextCursor from the previous result for the next page.")
+            + " name, with their health. Pass nextCursor from the previous result for the next page.")
     @ToolRisk(RiskLevel.READ_ONLY)
     @ToolTitle("Wylistuj indeksy")
     public PagedResult<IndexView> listIndices(
@@ -309,19 +323,20 @@ public class OpenSearchTools {
         String after = cursor == null ? null : validIndexName(cursors.open(cursor, LIST_INDICES, query));
         IndexPage page = useCase.listIndices(prefix, after, limit, index -> policy.allows(indices.resource(index)));
         List<IndexView> views = page.indices().stream()
-                .map(row -> new IndexView(row.name(), row.health(), row.documents(), row.sizeBytes())).toList();
+                .map(row -> new IndexView(row.name(), row.health())).toList();
         String next = page.lastName() == null ? null : cursors.issue(LIST_INDICES, query, page.lastName());
         return PagedResult.of(views, next);
     }
 
-    @Tool(name = GET_INDEX_MAPPING, description = "Returns the fields of one index with their mapping type, nested"
-            + " fields as dotted paths. At most 500 fields; truncated says when the list was cut.")
+    @Tool(name = GET_INDEX_MAPPING, description = "Returns the fields of one index that this server queries, returns"
+            + " or sorts by, with their mapping type, nested fields as dotted paths. Other fields of the index are not listed.")
     @ToolRisk(RiskLevel.READ_ONLY)
     @ToolTitle("Pokaż mapowanie indeksu")
     public IndexMappingResult getIndexMapping(
             @ToolParam(description = "One concrete index name (no wildcard, no list)")
             @ArgumentLimits(contractPattern = "OpenSearchIndexName", minLength = 1, maxLength = 255)
             @ResourceRef(type = OpenSearchIndexResolver.TYPE) String index) {
+        requireFeature(OpenSearchFeatures.MAPPING);
         validIndexName(index);
         ResolvedIndex resolved = ResourceContext.required()
                 .fetched(OpenSearchIndexResolver.TYPE, index, ResolvedIndex.class).orElseThrow();

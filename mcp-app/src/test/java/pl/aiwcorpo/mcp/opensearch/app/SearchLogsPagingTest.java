@@ -47,7 +47,7 @@ class SearchLogsPagingTest extends ServerTestSupport {
             call(client, "search_logs", args(10));
         }
         assertThat(searches().getFirst().body())
-                .contains("\"sort\":[{\"@timestamp\":{\"order\":\"desc\",\"unmapped_type\":\"date\"}},{\"event.id\":{\"order\":\"asc\"}}]")
+                .contains("\"sort\":[{\"@timestamp\":{\"order\":\"desc\",\"unmapped_type\":\"date\"}},{\"event.id\":{\"order\":\"asc\",\"unmapped_type\":\"keyword\"}}]")
                 .doesNotContain("search_after", "_id\"", "script");
     }
 
@@ -168,5 +168,59 @@ class SearchLogsPagingTest extends ServerTestSupport {
             assertThat(text(result)).contains("Xk3n8ZIBdLrT0q1aHf2p").doesNotContain("Ab0n8ZIBdLrT0q1aHf00");
         }
         assertThat(searches().get(1).body()).contains("\"search_after\":[1793092502123,\"evt-Xk3n8ZIBdLrT0q1aHf2p\"]");
+    }
+
+    @Test
+    void aPageThatTheFirstReadLeftEmptyIsFilledByTheNextAndCutToTheSize() {
+        Map<String, Object> arguments = args(1);
+        arguments.put("text", "all-hidden-first");
+        try (McpSyncClient client = clientWithCredential(PAT)) {
+            McpSchema.CallToolResult result = call(client, "search_logs", arguments);
+
+            assertThat(result.isError()).as(text(result)).isFalse();
+            assertThat(text(result)).contains("fill-1").doesNotContain("fill-2", "restricted note");
+            assertThat(cursorLeaksNothing(nextCursor(text(result)), "evt-h5", "evt-h1")).isTrue();
+        }
+        assertThat(searches()).hasSize(2);
+        assertThat(searches().get(1).body()).as("the second read goes on after the last raw hit of the first")
+                .contains("\"search_after\":[");
+        Map<String, Object> next = new HashMap<>(arguments);
+        try (McpSyncClient client = clientWithCredential(PAT)) {
+            next.put("cursor", nextCursor(text(call(client, "search_logs", arguments))));
+            call(client, "search_logs", next);
+        }
+        assertThat(searches().getLast().body()).as("the cursor continues after the last hit the caller got")
+                .contains("evt-fill-1").doesNotContain("evt-h");
+    }
+
+    @Test
+    void whenFiveReadsFindNothingTheCallerGetsAnEmptyPageAndTheLastPosition() {
+        Map<String, Object> arguments = args(2);
+        arguments.put("text", "all-hidden-always");
+        try (McpSyncClient client = clientWithCredential(PAT)) {
+            McpSchema.CallToolResult result = call(client, "search_logs", arguments);
+
+            assertThat(result.isError()).as(text(result)).isFalse();
+            assertThat(text(result)).contains("\"items\":[]", "\"nextCursor\":\"").doesNotContain("restricted note", "logs-team-a-hr-1");
+        }
+        assertThat(searches()).as("MAX_READS reads, no more").hasSize(5);
+    }
+
+    @Test
+    void theCallCarriesTheTimeLimitsBelowTheReadTimeout() {
+        try (McpSyncClient client = clientWithCredential(PAT)) {
+            call(client, "search_logs", args(2));
+            call(client, "count_logs", Map.of("index_prefix", "logs-team-a", "from", "2026-10-27T08:00:00Z", "to", "2026-10-27T10:00:00Z"));
+        }
+        assertThat(searches()).hasSize(2).allSatisfy(request -> {
+            assertThat(request.query()).contains("cancel_after_time_interval=900ms");
+            assertThat(request.body()).contains("\"timeout\":\"800ms\"");
+        });
+        assertThat(searches().getFirst().body()).contains("{\"event.id\":{\"order\":\"asc\",\"unmapped_type\":\"keyword\"}}");
+    }
+
+    private static boolean cursorLeaksNothing(String cursor, String... hidden) {
+        return java.util.Arrays.stream(hidden).noneMatch(value -> cursor.contains(value) || cursor.contains(
+                java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(value.getBytes(java.nio.charset.StandardCharsets.UTF_8))));
     }
 }

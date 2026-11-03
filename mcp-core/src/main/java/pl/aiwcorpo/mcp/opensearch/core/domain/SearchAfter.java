@@ -23,13 +23,13 @@ public record SearchAfter(long timestamp, String tiebreaker) {
 
     /** Empty when the sort value cannot be carried in a cursor; the caller then issues no cursor. */
     public static java.util.Optional<SearchAfter> of(@Nullable Object timestamp, @Nullable Object tiebreaker) {
-        if (!(timestamp instanceof Number number) || number instanceof Double || number instanceof Float
+        if (!(timestamp instanceof Integer || timestamp instanceof Long || timestamp instanceof Short || timestamp instanceof Byte)
                 || tiebreaker == null) {
             return java.util.Optional.empty();
         }
         String text = String.valueOf(tiebreaker);
         return TIEBREAKER.matcher(text).matches()
-                ? java.util.Optional.of(new SearchAfter(number.longValue(), text)) : java.util.Optional.empty();
+                ? java.util.Optional.of(new SearchAfter(((Number) timestamp).longValue(), text)) : java.util.Optional.empty();
     }
 
     /** The text kept in a cursor: {@code <timestamp>|<tiebreaker>}. */

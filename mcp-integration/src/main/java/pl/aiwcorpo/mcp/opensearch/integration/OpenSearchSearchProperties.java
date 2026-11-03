@@ -15,13 +15,15 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * @param serviceField   keyword field the service filter and the service grouping use
  * @param hostField      keyword field the host grouping uses
  * @param maxRange       longest allowed {@code to - from}
+ * @param callBudget   wall-clock time one {@code search_logs} call may spend reading backend pages
+ * @param tiebreakerType sort type to use for the tiebreaker on indices that lack the field, {@code keyword} or {@code long}
  * @param tiebreakerField keyword or numeric field with a different value in every document, the last sort key of
  *                       {@code search_logs}; empty switches paging off. Not {@code _id}: it has no doc values and is
  *                       unique only within an index
  */
 @ConfigurationProperties("opensearch.search")
 public record OpenSearchSearchProperties(String timestampField, List<String> queryFields, List<String> resultFields,
-        String levelField, String serviceField, String hostField, Duration maxRange, String tiebreakerField) {
+        String levelField, String serviceField, String hostField, Duration maxRange, Duration callBudget, String tiebreakerType, String tiebreakerField) {
 
     /** Plain field paths: no wildcards, so the configuration cannot widen the result to every field. */
     private static final Pattern FIELD = Pattern.compile("[A-Za-z0-9@_][A-Za-z0-9@_.-]{0,127}");
@@ -35,7 +37,15 @@ public record OpenSearchSearchProperties(String timestampField, List<String> que
         serviceField = serviceField == null || serviceField.isBlank() ? "service.name" : serviceField;
         hostField = hostField == null || hostField.isBlank() ? "host.name" : hostField;
         maxRange = maxRange == null ? Duration.ofDays(7) : maxRange;
+        callBudget = callBudget == null ? Duration.ofSeconds(20) : callBudget;
+        tiebreakerType = tiebreakerType == null || tiebreakerType.isBlank() ? "keyword" : tiebreakerType.strip();
         tiebreakerField = tiebreakerField == null ? "" : tiebreakerField.strip();
+        if (!tiebreakerType.equals("keyword") && !tiebreakerType.equals("long")) {
+            throw new IllegalStateException("opensearch.search.tiebreaker-type must be keyword or long");
+        }
+        if (callBudget.isNegative() || callBudget.isZero()) {
+            throw new IllegalStateException("opensearch.search.call-budget must be positive");
+        }
         requireFields("timestamp-field", List.of(timestampField));
         requireFields("query-fields", queryFields);
         requireFields("result-fields", resultFields);
@@ -52,6 +62,21 @@ public record OpenSearchSearchProperties(String timestampField, List<String> que
         if (maxRange.isNegative() || maxRange.isZero()) {
             throw new IllegalStateException("opensearch.search.max-range must be positive");
         }
+    }
+
+    /** The fields a mapping may show: the ones this server queries, returns, groups by or sorts by. */
+    public java.util.Set<String> mappingFields() {
+        java.util.Set<String> fields = new java.util.LinkedHashSet<>();
+        fields.add(timestampField);
+        fields.addAll(queryFields);
+        fields.addAll(resultFields);
+        fields.add(levelField);
+        fields.add(serviceField);
+        fields.add(hostField);
+        if (pagingEnabled()) {
+            fields.add(tiebreakerField);
+        }
+        return fields;
     }
 
     public boolean pagingEnabled() {

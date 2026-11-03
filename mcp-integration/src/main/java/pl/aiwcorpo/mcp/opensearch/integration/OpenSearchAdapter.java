@@ -40,6 +40,7 @@ import pl.aiwcorpo.mcp.opensearch.core.domain.GroupBy;
 import pl.aiwcorpo.mcp.opensearch.core.domain.IndexDocument;
 import pl.aiwcorpo.mcp.opensearch.core.domain.IndexScope;
 import pl.aiwcorpo.mcp.opensearch.core.domain.LogBucket;
+import pl.aiwcorpo.mcp.opensearch.core.domain.LogBuckets;
 import pl.aiwcorpo.mcp.opensearch.core.domain.LogFilter;
 import pl.aiwcorpo.mcp.opensearch.core.domain.LogHit;
 import pl.aiwcorpo.mcp.opensearch.core.domain.LogQuery;
@@ -95,10 +96,16 @@ public class OpenSearchAdapter implements OpenSearchPort {
 
     private final RestClient client;
     private final OpenSearchSearchProperties search;
+    /** The search is told to stop at 80% of the read timeout and cancelled at 90%, so the cluster stops before the client gives up. */
+    private final String searchTimeout;
+    private final String cancelAfter;
 
     public OpenSearchAdapter(OpenSearchBackendProperties properties, OpenSearchSearchProperties search,
             ObjectProvider<SslBundles> sslBundles, Environment environment) {
         this.search = search;
+        long readMillis = properties.readTimeout().toMillis();
+        this.searchTimeout = Math.max(1, readMillis * 8 / 10) + "ms";
+        this.cancelAfter = Math.max(1, readMillis * 9 / 10) + "ms";
         this.client = RestClient.builder()
                 .baseUrl(requireBaseUrl(properties.baseUrl(),
                         environment.matchesProfiles(DEV_PROFILE) || properties.allowPlainHttp()))
@@ -165,7 +172,7 @@ public class OpenSearchAdapter implements OpenSearchPort {
         SearchResponse response;
         try {
             response = client.post()
-                    .uri("/{expression}/_search?" + INDICES_OPTIONS + "&allow_partial_search_results=false",
+                    .uri("/{expression}/_search?" + INDICES_OPTIONS + "&allow_partial_search_results=false&cancel_after_time_interval=" + cancelAfter,
                             String.join(",", indices))
                     .headers(credential::applyTo)
                     .contentType(MediaType.APPLICATION_JSON)
@@ -210,7 +217,7 @@ public class OpenSearchAdapter implements OpenSearchPort {
     public LogCount count(List<String> indices, IndexScope scope, LogQuery query) {
         BackendCredential credential = credential();
         CountResponse response = send(() -> client.post()
-                .uri("/{expression}/_search?" + INDICES_OPTIONS + "&allow_partial_search_results=false",
+                .uri("/{expression}/_search?" + INDICES_OPTIONS + "&allow_partial_search_results=false&cancel_after_time_interval=" + cancelAfter,
                         String.join(",", indices))
                 .headers(credential::applyTo)
                 .contentType(MediaType.APPLICATION_JSON)
@@ -251,7 +258,7 @@ public class OpenSearchAdapter implements OpenSearchPort {
     public List<IndexInfo> indexInfo(List<String> indices) {
         BackendCredential credential = credential();
         List<Map<String, String>> rows = send(() -> client.get()
-                .uri("/_cat/indices/{expression}?format=json&bytes=b&h=index,health,docs.count,store.size&"
+                .uri("/_cat/indices/{expression}?format=json&h=index,health&"
                         + INDICES_OPTIONS, String.join(",", indices))
                 .headers(credential::applyTo)
                 .retrieve()
@@ -263,8 +270,7 @@ public class OpenSearchAdapter implements OpenSearchPort {
         for (Map<String, String> row : rows) {
             String name = row.get("index");
             if (name != null) {
-                byName.put(name, new IndexInfo(name, health(row.get("health")), number(row.get("docs.count")),
-                        number(row.get("store.size"))));
+                byName.put(name, new IndexInfo(name, health(row.get("health"))));
             }
         }
         return indices.stream().map(byName::get).filter(java.util.Objects::nonNull).toList();
@@ -272,13 +278,6 @@ public class OpenSearchAdapter implements OpenSearchPort {
 
     private static String health(String value) {
         return "green".equals(value) || "yellow".equals(value) || "red".equals(value) ? value : null;
-    }
-
-    private static Long number(String value) {
-        if (value == null || !value.matches("\\d{1,18}")) {
-            return null;
-        }
-        return Long.parseLong(value);
     }
 
     @Override
@@ -310,7 +309,7 @@ public class OpenSearchAdapter implements OpenSearchPort {
         List<MappingField> fields = new ArrayList<>();
         boolean[] truncated = {false};
         if (mapping.mappings() != null) {
-            collectFields(fields, truncated, "", mapping.mappings().get("properties"), 0);
+            collectFields(fields, truncated, "", mapping.mappings().get("properties"), 0, search.mappingFields());
         }
         return Optional.of(new IndexMapping(index, fields, truncated[0]));
     }
@@ -319,8 +318,9 @@ public class OpenSearchAdapter implements OpenSearchPort {
     private static final int MAX_MAPPING_DEPTH = 10;
     private static final java.util.regex.Pattern MAPPING_TYPE = java.util.regex.Pattern.compile("[a-z][a-z0-9_]{0,31}");
 
+    /** Only fields this server uses (and their sub-fields) are listed; the rest of the schema of the logs stays with OpenSearch. */
     private static void collectFields(List<MappingField> out, boolean[] truncated, String prefix, Object properties,
-            int depth) {
+            int depth, java.util.Set<String> shown) {
         if (!(properties instanceof Map<?, ?> map)) {
             return;
         }
@@ -334,11 +334,11 @@ public class OpenSearchAdapter implements OpenSearchPort {
             }
             String path = prefix.isEmpty() ? String.valueOf(entry.getKey()) : prefix + "." + entry.getKey();
             Object type = definition.get("type");
-            if (type instanceof String name) {
+            if (type instanceof String name && shown.stream().anyMatch(field -> path.equals(field) || path.startsWith(field + "."))) {
                 out.add(new MappingField(UntrustedValues.label(path), MAPPING_TYPE.matcher(name).matches() ? name : "other"));
             }
-            collectFields(out, truncated, path, definition.get("properties"), depth + 1);
-            collectFields(out, truncated, path, definition.get("fields"), depth + 1);
+            collectFields(out, truncated, path, definition.get("properties"), depth + 1, shown);
+            collectFields(out, truncated, path, definition.get("fields"), depth + 1, shown);
         }
     }
 
@@ -379,14 +379,14 @@ public class OpenSearchAdapter implements OpenSearchPort {
     }
 
     @Override
-    public List<LogBucket> aggregate(List<String> indices, IndexScope scope, AggregateQuery query) {
+    public LogBuckets aggregate(List<String> indices, IndexScope scope, AggregateQuery query) {
         BackendCredential credential = credential();
         AggregateResponse response;
         try {
             // The names come from QueryScope.opensearchSearchTarget: each matches the contract's index name pattern,
             // so none has a comma or a wildcard, and they are joined with commas here.
             response = client.post()
-                    .uri("/{expression}/_search?" + INDICES_OPTIONS + "&allow_partial_search_results=false",
+                    .uri("/{expression}/_search?" + INDICES_OPTIONS + "&allow_partial_search_results=false&cancel_after_time_interval=" + cancelAfter,
                             String.join(",", indices))
                     .headers(credential::applyTo)
                     .contentType(MediaType.APPLICATION_JSON)
@@ -412,7 +412,8 @@ public class OpenSearchAdapter implements OpenSearchPort {
                 buckets.add(new LogBucket(UntrustedValues.label(String.valueOf(bucket.key())), bucket.count()));
             }
         }
-        return buckets;
+        long other = response.aggregations().groups().otherDocuments() == null ? 0 : response.aggregations().groups().otherDocuments();
+        return new LogBuckets(buckets, other);
     }
 
     @Override
@@ -466,12 +467,12 @@ public class OpenSearchAdapter implements OpenSearchPort {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("size", query.size());
         body.put("track_total_hits", false);
-        body.put("timeout", "10s");
+        body.put("timeout", searchTimeout);
         body.put("_source", Map.of("includes", search.resultFields()));
         List<Object> sort = new ArrayList<>();
         sort.add(Map.of(search.timestampField(), orderedMap("order", "desc", "unmapped_type", "date")));
         if (search.pagingEnabled()) {
-            sort.add(Map.of(search.tiebreakerField(), Map.of("order", "asc")));
+            sort.add(Map.of(search.tiebreakerField(), orderedMap("order", "asc", "unmapped_type", search.tiebreakerType())));
             if (query.after() != null) {
                 body.put("search_after", List.of(query.after().timestamp(), query.after().tiebreaker()));
             }
@@ -492,7 +493,7 @@ public class OpenSearchAdapter implements OpenSearchPort {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("size", 0);
         body.put("track_total_hits", true);
-        body.put("timeout", "10s");
+        body.put("timeout", searchTimeout);
         body.put("query", queryClause(scope, query.filter(), query.from(), query.to()));
         return body;
     }
@@ -505,7 +506,7 @@ public class OpenSearchAdapter implements OpenSearchPort {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("size", 0);
         body.put("track_total_hits", false);
-        body.put("timeout", "10s");
+        body.put("timeout", searchTimeout);
         body.put("query", queryClause(scope, query.filter(), query.from(), query.to()));
         body.put("aggs", Map.of("groups", Map.of("terms", Map.of("field", groupField(query.groupBy()),
                 "size", query.buckets()))));
@@ -655,7 +656,7 @@ public class OpenSearchAdapter implements OpenSearchPort {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    record Groups(List<Bucket> buckets) {
+    record Groups(List<Bucket> buckets, @JsonProperty("sum_other_doc_count") Long otherDocuments) {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)

@@ -72,9 +72,17 @@ abstract class ServerTestSupport {
     @Autowired
     BackendCapabilities capabilities;
 
+    /** False for a class that tests a backend whose probe fails: then there is nothing to wait for. */
+    boolean probeAnswers() {
+        return true;
+    }
+
     /** The probe runs on its own thread after the start; until it has answered, extended tools refuse. */
     @BeforeEach
     void probeHasAnswered() throws InterruptedException {
+        if (!probeAnswers()) {
+            return;
+        }
         long deadline = System.nanoTime() + Duration.ofSeconds(10).toNanos();
         while (capabilities.of(OpenSearchFeatures.PROBE).state() == Capabilities.State.UNAVAILABLE
                 && System.nanoTime() < deadline) {

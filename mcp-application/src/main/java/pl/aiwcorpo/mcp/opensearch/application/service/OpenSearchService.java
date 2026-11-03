@@ -18,7 +18,7 @@ import pl.aiwcorpo.mcp.opensearch.core.domain.LogPage;
 import pl.aiwcorpo.mcp.opensearch.core.domain.QueryCheck;
 import pl.aiwcorpo.mcp.opensearch.core.domain.IndexDocument;
 import pl.aiwcorpo.mcp.opensearch.core.domain.IndexScope;
-import pl.aiwcorpo.mcp.opensearch.core.domain.LogBucket;
+import pl.aiwcorpo.mcp.opensearch.core.domain.LogBuckets;
 import pl.aiwcorpo.mcp.opensearch.core.domain.LogQuery;
 import pl.aiwcorpo.mcp.opensearch.core.domain.NotFoundOrDeniedException;
 import pl.aiwcorpo.mcp.opensearch.core.domain.ResolvedIndex;
@@ -130,10 +130,10 @@ public class OpenSearchService implements OpenSearchUseCase {
     }
 
     @Override
-    public List<LogBucket> aggregateLogs(AggregateQuery query, Predicate<String> readable) {
+    public LogBuckets aggregateLogs(AggregateQuery query, Predicate<String> readable) {
         List<String> targets = targets(query.prefix(), query.from(), query.to(), readable);
         if (targets.isEmpty()) {
-            return List.of();
+            return LogBuckets.empty();
         }
         return openSearch.aggregate(targets, scopes.current(), query);
     }

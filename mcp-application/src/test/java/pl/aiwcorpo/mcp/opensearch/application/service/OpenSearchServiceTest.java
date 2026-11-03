@@ -22,7 +22,7 @@ import pl.aiwcorpo.mcp.platform.text.UntrustedText;
 import pl.aiwcorpo.mcp.opensearch.core.domain.GroupBy;
 import pl.aiwcorpo.mcp.opensearch.core.domain.IndexDocument;
 import pl.aiwcorpo.mcp.opensearch.core.domain.IndexScope;
-import pl.aiwcorpo.mcp.opensearch.core.domain.LogBucket;
+import pl.aiwcorpo.mcp.opensearch.core.domain.LogBuckets;
 import pl.aiwcorpo.mcp.opensearch.core.domain.LogFilter;
 import pl.aiwcorpo.mcp.opensearch.core.domain.LogHit;
 import pl.aiwcorpo.mcp.opensearch.core.domain.LogQuery;
@@ -89,7 +89,7 @@ class OpenSearchServiceTest {
         @Override
         public List<IndexInfo> indexInfo(List<String> targets) {
             described.add(targets);
-            return targets.stream().map(name -> new IndexInfo(name, "green", 1L, 2L)).toList();
+            return targets.stream().map(name -> new IndexInfo(name, "green")).toList();
         }
 
         @Override
@@ -103,9 +103,9 @@ class OpenSearchServiceTest {
         }
 
         @Override
-        public List<LogBucket> aggregate(List<String> targets, IndexScope scope, AggregateQuery query) {
+        public LogBuckets aggregate(List<String> targets, IndexScope scope, AggregateQuery query) {
             aggregated.add(targets);
-            return List.of();
+            return LogBuckets.empty();
         }
 
         @Override
@@ -158,7 +158,7 @@ class OpenSearchServiceTest {
         names = List.of();
 
         assertThat(service.searchLogs(query("logs-team-a"), index -> true).hits()).isEmpty();
-        assertThat(service.aggregateLogs(aggregate("logs-team-a"), index -> true)).isEmpty();
+        assertThat(service.aggregateLogs(aggregate("logs-team-a"), index -> true).buckets()).isEmpty();
         assertThat(searched).isEmpty();
         assertThat(aggregated).isEmpty();
     }
@@ -167,7 +167,7 @@ class OpenSearchServiceTest {
     void aPrefixWithNoReadableIndexIsAnEmptyResultLikeAnUnknownOne() {
         assertThat(service.searchLogs(query("logs-team-a-hr"), index -> !index.contains("-hr-")).hits()).isEmpty();
         assertThat(service.searchLogs(query("nothing"), index -> true).hits()).isEmpty();
-        assertThat(service.aggregateLogs(aggregate("nothing"), index -> true)).isEmpty();
+        assertThat(service.aggregateLogs(aggregate("nothing"), index -> true).buckets()).isEmpty();
         assertThat(searched).isEmpty();
         assertThat(aggregated).isEmpty();
     }

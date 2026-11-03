@@ -111,6 +111,7 @@ final class StubBackend {
     private final List<String> elsewhereHits = new CopyOnWriteArrayList<>();
     private final List<String> probeAuthorizations = new CopyOnWriteArrayList<>();
     private volatile boolean anonymousRoot = true;
+    private volatile int rootStatus = 200;
     private volatile String fixtures = FIXTURES_2_19;
 
     private StubBackend(HttpServer server, HttpServer elsewhere) {
@@ -171,6 +172,11 @@ final class StubBackend {
         this.anonymousRoot = allowed;
     }
 
+    /** Status of the answer of {@code GET /} when it is not refused; 503 makes the probe fail. */
+    void rootStatus(int status) {
+        this.rootStatus = status;
+    }
+
     /** Which directory of {@code opensearch-fixtures} answers the version-dependent endpoints. */
     void useFixtures(String directory) {
         this.fixtures = directory;
@@ -200,7 +206,7 @@ final class StubBackend {
         if ("/".equals(path) && "GET".equals(exchange.getRequestMethod())) {
             probeAuthorizations.add(String.valueOf(authorization));
             if (anonymousRoot) {
-                respond(exchange, 200, fixture("root.json"));
+                respond(exchange, rootStatus, rootStatus == 200 ? fixture("root.json") : "{\"error\":\"unavailable\"}");
             } else {
                 respond(exchange, 401, "{\"error\":\"Unauthorized\"}");
             }
@@ -297,11 +303,24 @@ final class StubBackend {
         if (body.contains("\"aggs\"")) {
             respond(exchange, 200, "{\"took\":2,\"timed_out\":false,\"_shards\":{\"total\":2,\"successful\":2,\"skipped\":0,"
                     + "\"failed\":0},\"hits\":{\"max_score\":null,\"hits\":[]},\"aggregations\":{\"groups\":{"
-                    + "\"doc_count_error_upper_bound\":0,\"sum_other_doc_count\":0,\"buckets\":["
+                    + "\"doc_count_error_upper_bound\":0,\"sum_other_doc_count\":5,\"buckets\":["
                     + "{\"key\":\"ERROR\",\"doc_count\":7},{\"key\":\"WARN <script>\",\"doc_count\":3}]}}}");
             return;
         }
         List<String> hits = new ArrayList<>();
+        if (body.contains("all-hidden-always") || (body.contains("all-hidden-first") && !body.contains("\"search_after\""))) {
+            for (int i = 1; i <= 5; i++) {
+                hits.add(hit("logs-team-a-hr-1", "h" + i, "2026-10-27T09:0" + (9 - i) + ":00.000Z", "restricted note"));
+            }
+            respond(exchange, 200, "{\"took\":3,\"timed_out\":false,\"hits\":{\"max_score\":null,\"hits\":[" + String.join(",", hits) + "]}}");
+            return;
+        }
+        if (body.contains("all-hidden-first")) {
+            hits.add(hit("logs-team-a-2026.10.27", "fill-1", "2026-10-27T09:00:00.000Z", "filled one"));
+            hits.add(hit("logs-team-a-2026.10.27", "fill-2", "2026-10-27T08:59:00.000Z", "filled two"));
+            respond(exchange, 200, "{\"took\":3,\"timed_out\":false,\"hits\":{\"max_score\":null,\"hits\":[" + String.join(",", hits) + "]}}");
+            return;
+        }
         if (body.contains("\"search_after\"")) {
             hits.add(hit("logs-team-a-2026.10.26", "Ab0n8ZIBdLrT0q1aHf01", "2026-10-26T23:00:00.000Z", "second page entry"));
             respond(exchange, 200, "{\"took\":3,\"timed_out\":false,\"hits\":{\"max_score\":null,\"hits\":[" + String.join(",", hits) + "]}}");
