@@ -1,19 +1,36 @@
 # mcp-opensearch: serwer MCP platformy
 
-Serwer MCP dla systemu `opensearch`, zbudowany na `mcp-platform-starter` 3.0.0-beta-11 (Java 25, Spring Boot
+Serwer MCP dla systemu `opensearch`, zbudowany na `mcp-platform-starter` 3.0.0-beta-13 (Java 25, Spring Boot
 4.1.0, Spring AI 2.0.0, kontrakty `mcp-contracts` 6.2.1). Stoi wyłącznie za gateway'em platformy: przyjmuje
 ruch tylko po mTLS z wewnętrznym JWT gateway'a (C2), a do systemu docelowego woła z poświadczeniem
 użytkownika, które gateway dołącza do każdego żądania (C3). Bez poprawnego JWT odpowiada 401, nie ma trybu
 anonimowego.
 
-Logowania użytkowników, decyzji o dostępie do narzędzi i potwierdzeń akcji destrukcyjnych serwer nie robi:
-to zadania gateway'a. Serwer odpowiada za narzędzia, adapter do systemu, poprawne błędy (C10) i audyt (C8),
-który dokłada starter.
+## Dla kogo
+
+Dla administratora, który podłącza własny klaster OpenSearch (self-managed, wtyczka Security) do platformy MCP, i dla
+autora, który dopisuje narzędzia (`docs/jak-napisac-narzedzie.md`). Serwer tylko czyta: nie ma narzędzia, które zmienia
+dane albo ustawienia klastra, ani narzędzia przyjmującego zapytanie, ścieżkę API, SQL czy PPL od modelu. Dokumentacja
+platformy (gateway, polityki, portal): repozytorium `mcp-docs` organizacji `aiwcorpo`; tu jest tylko to, co dotyczy tego serwera.
+
+### Wspierane wersje
+
+| Produkt | Stan | Jak jest sprawdzone |
+| --- | --- | --- |
+| OpenSearch 2.0 do 2.x (najnowsza 2.19) | wspierany | fixture `opensearch-2.19` w `StubBackend` |
+| OpenSearch 3.x (3.0 do 3.9) | wspierany | fixture `opensearch-3.x` |
+| OpenSearch 1.x, Elasticsearch 7.10 i forki bez `version.distribution: opensearch`, AWS OpenSearch Serverless | tryb `degraded`: `search_logs`, `aggregate_logs`, `count_logs`, `get_document`, `get_index_mapping` działają (to wspólne API z Elasticsearch 7.10); `list_indices`, `validate_query` i `get_cluster_health` odpowiadają `upstream_unavailable` | fixture `elasticsearch-7.10` sprawdza tylko klasyfikację sondy |
+| OpenSearch 4.x i nowsze | jak wyżej, do czasu sprawdzenia | |
+
+Minimalna wspierana wersja to OpenSearch 2.0. Wersja jest czytana z `GET /` przy starcie i co 5 minut (patrz "Wersje
+OpenSearch i tryb degraded"). Fixtures w `mcp-app/src/test/resources/opensearch-fixtures/` są napisane według
+udokumentowanych kształtów odpowiedzi, nie nagrane z klastra (nie było klastra ani zgody na pobranie obrazów); wymieniamy je na
+nagrania, gdy będzie klaster testowy.
 
 ## Szybki start
 
 ```bash
-export JAVA_HOME=/opt/homebrew/Cellar/openjdk@25/25.0.4.1/libexec/openjdk.jdk/Contents/Home
+export JAVA_HOME="$(/usr/libexec/java_home -v 25)"      # macOS; na Linuksie katalog JDK 25
 ./mvnw verify                 # build, testy przez TestGateway i atrapę backendu; jar: mcp-app/target/mcp-opensearch.jar
 ```
 
@@ -24,10 +41,10 @@ JWKS z kluczy testowych kontraktów i podpisuje wewnętrzne JWT, a `StubBackend`
 
 | Moduł | Co w nim jest | W tym serwerze |
 | --- | --- | --- |
-| `mcp-core` | domena i porty, czysta Java | `IndexScope` (prefiksy, granica na `-`), `IndexPattern`, `LogQuery`, `LogHit`, `IndexDocument`, `ResolvedIndices`, wyjątki domeny; port wejściowy `OpenSearchUseCase`, porty wyjściowe `OpenSearchPort` i `IndexScopeProvider` |
-| `mcp-application` | przypadki użycia (bez Springa) | `OpenSearchService`: prefiks z argumentu wybiera spośród konkretnych indeksów zakresu, odrzucanie wyników spoza zakresu |
-| `mcp-integration` | adaptery wyjściowe do systemu | `OpenSearchAdapter` (REST, poświadczenie z C3, timeouty, bez przekierowań, `https` poza `dev`, budowa zapytania), `BoundedBodyInterceptor` (limit rozmiaru odpowiedzi), `BackendResponseException` (odpowiedź bez treści w komunikacie), `ConfiguredIndexScopeProvider`, `UntrustedValues` (spłaszczenie wartości do wpisów, normalizacja, limity), właściwości `opensearch.*` |
-| `mcp-tools` | narzędzia MCP, powierzchnia publiczna | `OpenSearchTools` (`search_logs`, `get_document`, `@ArgumentLimits` na argumentach), `OpenSearchToolErrors` (wyjątki domeny -> kody C10) |
+| `mcp-core` | domena i porty, czysta Java | `IndexScope` (prefiksy, granica na `-`), `LogQuery`, `LogHit`, `LogPage`, `SearchAfter`, `IndexDocument`, `IndexMapping`, `QueryCheck`, `ClusterHealth`, `OpenSearchFeatures`, wyjątki domeny; port wejściowy `OpenSearchUseCase`, porty wyjściowe `OpenSearchPort`, `ScopedIndices` i `IndexScopeProvider` |
+| `mcp-application` | przypadki użycia (bez Springa) | `OpenSearchService`: prefiks z argumentu wybiera spośród konkretnych indeksów zakresu, odrzucanie wyników spoza zakresu, strony listy indeksów |
+| `mcp-integration` | adaptery wyjściowe do systemu | `OpenSearchAdapter` (REST, poświadczenie z C3, timeouty, bez przekierowań, `https` poza `dev`, budowa zapytania), `BoundedBodyInterceptor` (limit rozmiaru odpowiedzi), `BackendResponseException` (odpowiedź bez treści w komunikacie), `OpenSearchCapabilityProbe` (`GET /` przy starcie), `QueryScopeIndices`, `QueryScopeIndexScopeProvider`, `UntrustedValues` (spłaszczenie wartości do wpisów, normalizacja, limity), właściwości `opensearch.*` |
+| `mcp-tools` | narzędzia MCP, powierzchnia publiczna | `OpenSearchTools` (dziewięć narzędzi, `@ArgumentLimits` na argumentach, kursory `CursorCodec`), `OpenSearchToolErrors` (wyjątki domeny -> kody C10) |
 | `mcp-app` | bootstrap, wiring, jedyny jar, testy end-to-end | `McpServerApplication`, `McpToolsConfiguration` (lista narzędzi przez `SchemaLimitedToolCallbacks.of(...)` ze startera), `ApplicationWiringConfiguration` |
 
 Zależności idą do środka: `mcp-tools` -> `mcp-application` -> `mcp-core` <- `mcp-integration`; `mcp-app` składa
@@ -36,24 +53,109 @@ całość. Resolver zasobów (`@ResourceRef`, starter beta) dojdzie w `mcp-integ
 
 ## Narzędzia
 
-| Narzędzie (tytuł) | Ryzyko | Akcja | Uprawnienie (C9) | Poświadczenie | Argumenty | Wynik |
-| --- | --- | --- | --- | --- | --- | --- |
-| `search_logs` ("Szukaj w logach") | `READ_ONLY` | `read` | grupa `mcp-opensearch-read` i co najmniej jeden zakres `mcp-opensearch-idx-<prefiks>` | `token-exchange`, `Authorization: Bearer` (token od brokera, używany tylko w jednym żądaniu, bez cache) | `index_prefix` (prefiks `p` z kontraktu `OpenSearchIndexPrefix`, bez wieloznaczników: obejmuje indeks `p` i `p-...` w zakresie grantów), `text` (1-512 znaków, słowa; operatory to zwykły tekst), opcjonalnie `level` (`TRACE`...`FATAL`) i `service` (nazwa), `from`, `to` (ISO-8601 z przesunięciem, `to > from`, zakres <= `MCP_OPENSEARCH_MAX_RANGE`), `size` (1-100, domyślnie 20) | `{indexPrefix, from, to, hits: [{index, id, timestamp, data, truncated}], truncated}`; `index` to `@ResourceRef`; `data` to wpisy `{name, path, value}`, `path` i `value` jako `UntrustedText`; bez liczników |
-| `aggregate_logs` ("Zlicz logi według pola") | `READ_ONLY` | `read` | jak wyżej | jak wyżej | `index_prefix`, `group_by` (`level`, `service`, `host`), opcjonalnie `text`, `level`, `service`, `from`, `to`, `size` (1-50, domyślnie 10) | `{indexPrefix, from, to, groupBy, buckets: [{key, count}]}`; `key` jako `UntrustedText` |
-| `get_document` ("Pobierz dokument z logów") | `READ_ONLY` | `read` | jak wyżej | jak wyżej | `index` (`@ResourceRef` typu `OpenSearch::Index`; jeden konkretny indeks, nie alias ani data stream, `^[a-z0-9][a-z0-9._-]{0,254}$`), `id` (`^[A-Za-z0-9_-][A-Za-z0-9_.:@+=-]{0,255}$`) | `{index, id, data, truncated}`; `data` jak w `search_logs` |
+Dziewięć narzędzi, wszystkie `READ_ONLY` z akcją `read`. Poświadczenie każdego: `token-exchange`, `Authorization: Bearer`
+(token od brokera, używany w jednym żądaniu, bez cache). Uprawnienie (C9): grupa `mcp-opensearch-read`; narzędzia
+działające na indeksach wymagają też co najmniej jednego zakresu `mcp-opensearch-idx-<prefiks>`.
 
-Nazwy widziane przez klienta: `opensearch__search_logs`, `opensearch__aggregate_logs`, `opensearch__get_document`
-(prefiks dokłada gateway, C5). Model podaje wartości (tekst, poziom, usługa, pole grupowania), nigdy zapytania:
-`multi_match` z operatorem `and` po polach z konfiguracji, `term` dla poziomu i usługi oraz jedna agregacja `terms`
-na polu z konfiguracji buduje serwer. Wynik `search_logs` i `get_document` nie przekracza 1 MB (budżet 900000 B
-szacowanego JSON, po przekroczeniu `truncated: true`).
-Błędy narzędzi: `not_found_or_denied` (`get_document`: brak indeksu lub dokumentu, 403 z OpenSearch, brak grantów, indeks poza
-grantami, indeks z tagiem `restricted`, alias, data stream, indeks ukryty; treść to stała platformy),
-`access_denied` (brak grupy `mcp-opensearch-read`), `credential_required` (brak poświadczenia, 401 z OpenSearch,
-schemat inny niż `Bearer`), `invalid_argument` (zły argument; prefiks obejmujący więcej niż 100 indeksów),
-`upstream_unavailable`, `internal_error` (także typ poświadczenia spoza `[token-exchange]`). Brak grantów, prefiks bez
-indeksu, poza zakresem albo z samymi indeksami `restricted` to w `search_logs` i `aggregate_logs` pusty wynik, ten sam dla
-wszystkich tych przyczyn. Szczegóły: `docs/api/tools-catalog.md`.
+| Narzędzie (tytuł) | Ryzyko | Akcja | Uprawnienie | `@ResourceRef` | Co robi |
+| --- | --- | --- | --- | --- | --- |
+| `search_logs` ("Szukaj w logach") | `READ_ONLY` | `read` | `mcp-opensearch-read` + zakres indeksów | `OpenSearch::Index` na `index` każdego trafienia | wyszukiwanie w logach prefiksu w zakresie czasu, strony przez `cursor` |
+| `aggregate_logs` ("Zlicz logi według pola") | `READ_ONLY` | `read` | jak wyżej | brak (indeksy filtrowane przed zapytaniem) | liczba dokumentów według `level`, `service` albo `host` |
+| `count_logs` ("Policz logi") | `READ_ONLY` | `read` | jak wyżej | brak (jak `aggregate_logs`) | liczba dokumentów spełniających filtr |
+| `get_document` ("Pobierz dokument z logów") | `READ_ONLY` | `read` | jak wyżej | argument `index`: `OpenSearch::Index` | jeden dokument po indeksie i `id` |
+| `list_indices` ("Wylistuj indeksy") | `READ_ONLY` | `read` | jak wyżej | `OpenSearch::Index` na `name` każdego wiersza | indeksy prefiksu: zdrowie, liczba dokumentów, rozmiar; strony przez `cursor` |
+| `get_index_mapping` ("Pokaż mapowanie indeksu") | `READ_ONLY` | `read` | jak wyżej | argument `index`: `OpenSearch::Index` | pola indeksu z typami |
+| `validate_query` ("Sprawdź zapytanie do logów") | `READ_ONLY` | `read` | jak wyżej | brak | czy OpenSearch przyjmuje zapytanie serwera i jak je czyta |
+| `get_cluster_health` ("Pokaż zdrowie klastra") | `READ_ONLY` | `read` | `mcp-opensearch-read`; wynik dotyczy całego klastra, więc polityka powinna go dawać osobnej grupie | brak | status, liczba węzłów i shardów, bez nazw |
+| `get_backend_info` ("Pokaż wersję i zdolności OpenSearch") | `READ_ONLY` | `read` | jak `get_cluster_health` | brak | wersja z sondy i dostępne funkcje; nie pyta OpenSearch |
+
+Nazwy widziane przez klienta mają prefiks `opensearch__` (dokłada gateway, C5). Model podaje wartości (tekst, poziom, usługa,
+pole grupowania), nigdy zapytania: `multi_match` z operatorem `and` po polach z konfiguracji, `term` dla poziomu i usługi,
+zakres czasu, filtr `_index` do prefiksów zakresu i jedną agregację `terms` na polu z konfiguracji buduje serwer.
+
+Argumenty (schematy są zamknięte, `additionalProperties: false`; limity trafiają do `inputSchema` i manifestu):
+
+- `index_prefix`: prefiks `p` z kontraktu `OpenSearchIndexPrefix`, bez wieloznaczników; obejmuje indeks `p` i `p-...` w zakresie grantów.
+- `text`: 1 do 512 znaków, słowa, które muszą wystąpić; operatory i cudzysłowy to zwykły tekst. Wymagany w `search_logs`, opcjonalny w pozostałych.
+- `level` (`TRACE` do `FATAL`), `service` (nazwa), `from`, `to` (ISO-8601 z przesunięciem, `to > from`, zakres do `MCP_OPENSEARCH_MAX_RANGE`).
+- `size`: `search_logs` 1 do 100 (domyślnie 20), `aggregate_logs` 1 do 50 (10), `list_indices` 1 do 50 (25).
+- `cursor`: `nextCursor` poprzedniej strony tego samego zapytania (`search_logs`, `list_indices`), do 1024 znaków `[A-Za-z0-9_.-]`.
+- `index` i `id` w `get_document` oraz `index` w `get_index_mapping`: jeden konkretny indeks (nie alias, nie data stream), `id` według `^[A-Za-z0-9_-][A-Za-z0-9_.:@+=-]{0,255}$`.
+- `group_by` w `aggregate_logs`: `level`, `service`, `host`.
+
+Wyniki:
+
+- `search_logs`, `list_indices`: `PagedResult` platformy, `{items, nextCursor, truncated, omitted}`; bez liczników i bez `total`
+  (liczba z systemu zawierałaby to, czego wywołujący nie widzi). Element `search_logs`: `{index, id, timestamp, data, truncated}`,
+  `data` to wpisy `{name, path, value}` z `path` i `value` jako `UntrustedText`. Element `list_indices`: `{name, health, documents, sizeBytes}`
+  (`null`, gdy OpenSearch nie podał, np. indeks czerwony).
+- `aggregate_logs`: `{indexPrefix, from, to, groupBy, buckets: [{key, count}]}`, `key` jako `UntrustedText`.
+- `count_logs`: `{indexPrefix, from, to, count, exact}`; `exact: false`, gdy OpenSearch podał dolne ograniczenie albo żądanie przekroczyło limit czasu.
+- `get_document`: `{index, id, data, truncated}`.
+- `get_index_mapping`: `{index, fields: [{path, type}], truncated}`; `path` jako `UntrustedText` (nazwy pól wymyśla ten, kto loguje),
+  do 500 pól, zagnieżdżone jako ścieżki z kropką, pola wielokrotne (`message.keyword`) osobno.
+- `validate_query`: `{valid, checked, invalidIndices, explanation}`; `explanation` to zapis Lucene pierwszego indeksu jako `UntrustedText`; tekst błędu
+  z OpenSearch nie jest przekazywany.
+- `get_cluster_health`: `{status, timedOut, nodes, activeShards, relocatingShards, initializingShards, unassignedShards, activeShardsPercent}`.
+- `get_backend_info`: `{state, version, features, detail}`.
+
+Wynik `search_logs` nie przekracza 1 MB (budżet 900000 B szacowanego JSON); po przekroczeniu `truncated: true`, a `nextCursor`
+wskazuje miejsce po ostatnim zwróconym trafieniu.
+
+Błędy narzędzi: `not_found_or_denied` (brak indeksu lub dokumentu, 403 z OpenSearch, brak grantów, indeks poza grantami, indeks z tagiem
+`restricted`, alias, data stream, indeks ukryty; treść to stała platformy), `access_denied` (brak grupy `mcp-opensearch-read`),
+`credential_required` (brak poświadczenia, 401 z OpenSearch, schemat inny niż `Bearer`), `invalid_argument` (zły argument albo
+kursor, prefiks obejmujący więcej niż 100 indeksów), `upstream_unavailable` (system nie odpowiada albo narzędzie jest wyłączone
+w trybie `degraded`), `internal_error` (także typ poświadczenia spoza `[token-exchange]`). Brak grantów, prefiks bez indeksu, poza
+zakresem albo z samymi indeksami `restricted` to w narzędziach wyszukujących i liczących pusty wynik (zero w `count_logs`), ten sam dla wszystkich
+tych przyczyn. Szczegóły: `docs/api/tools-catalog.md`.
+
+Narzędzi, które nie powstały, a które badanie API zalecało: `list_aliases` i `resolve_alias` (potrzebują typu zasobu `OpenSearch::Alias`,
+CC-214; alias o nazwie z zakresu może prowadzić do indeksów innego zespołu, więc serwer nie pokazuje aliasów w żadnej postaci), `field_caps`
+(pokrywa się z `get_index_mapping`), `run_ppl`, `sql`, `_msearch` i narzędzie "dowolne API" (poza modelem bezpieczeństwa platformy).
+
+### Stronicowanie
+
+`search_logs` stronicuje przez `search_after`, a `list_indices` przez nazwę ostatniego indeksu. Kursor to `CursorCodec` startera:
+podpisany HMAC, związany z `sub` wywołującego, narzędziem i odciskiem zapytania (prefiks, tekst, filtry, zakres czasu, `size`), ważny
+15 minut. Kursor innego użytkownika, innego narzędzia, zmienionego zapytania, sfałszowany i przeterminowany kończy się tym samym
+`invalid_argument`. Kursor niesie tylko pozycję; zakres wywołującego liczy się od nowa na każdej stronie, a politykę stosuje się do
+każdej strony, więc kursor niczego nie poszerza. Strona może być krótsza albo pusta i mieć `nextCursor` (trafienia spoza zakresu i z indeksów
+`restricted` znikają bez śladu).
+
+`search_logs` sortuje po polu czasu malejąco, a potem po polu o unikalnej wartości w każdym dokumencie (`MCP_OPENSEARCH_TIEBREAKER_FIELD`,
+np. `event.id`: pole `keyword` albo liczba). Bez drugiego klucza dokumenty o tym samym czasie ginęłyby na granicy stron. To nie może być `_id`
+(dokumentacja OpenSearch odradza: brak doc values, unikalny tylko w obrębie indeksu), więc serwer odmawia startu z `_id` albo innym polem
+zaczynającym się od `_`. Dopóki pole nie jest ustawione, stronicowanie jest wyłączone: `search_logs` zwraca pierwszą stronę (`nextCursor`
+zawsze `null`) i działa jak przed 6.2. Pole musi istnieć w mapowaniu; sprawdza to `get_index_mapping` (pierwsze uruchomienie, niżej).
+`list_indices` nie wymaga ustawienia.
+
+Klucz kursorów (`MCP_CURSOR_KEY`, Base64, co najmniej 32 bajty) musi być taki sam w każdej instancji; bez niego instancja losuje własny
+i ostrzega w logu, a kursor z jednej instancji odrzuca druga i ta sama po restarcie.
+
+### Wersje OpenSearch i tryb degraded
+
+Starter uruchamia `OpenSearchCapabilityProbe` po starcie i co 5 minut (`aiwcorpo.mcp.platform.capability.interval`); sonda woła `GET /` bez
+użytkownika i czyta tylko `version.number` i `version.distribution`.
+
+| Odpowiedź `GET /` | Stan | Funkcje |
+| --- | --- | --- |
+| `distribution: opensearch`, wersja 2.0 do 3.x | `supported` | wszystkie (`OpenSearchFeatures.TESTED`) |
+| `distribution` inna albo brak, wersja spoza 2.0 do 3.x | `degraded` | `search`, `count`, `get_document`, `mapping`, `search_after` |
+| 401 lub 403 | `degraded`, bez wersji | jak wyżej |
+| brak wersji, nieczytelna odpowiedź, błąd sieci, 5xx | `unavailable` | brak (narzędzia rozszerzone odmawiają; podstawowe próbują i kończą się błędem sieci, jeśli systemu nie ma) |
+
+Klaster z wtyczką Security zwykle odpowiada 401 na anonimowe `GET /`. Wtedy serwer jest `degraded`: nic się nie psuje, ale `list_indices`,
+`validate_query` i `get_cluster_health` odmawiają. Żeby sonda poznała wersję, ustaw `MCP_OPENSEARCH_PROBE_AUTHORIZATION` na pełną
+wartość nagłówka `Authorization` konta, które może wykonać `GET /` (uprawnienie `cluster:monitor/main`). Ten nagłówek idzie wyłącznie z
+sondą, nigdy z wywołaniem narzędzia, i nie jest drukowany (`toString` właściwości go pomija). To jedyny sekret serwera;
+poświadczenie użytkownika nadal przychodzi od gateway'a.
+
+Do pierwszej odpowiedzi sondy (zwykle sekundy po starcie) system jest `unavailable`, więc narzędzia rozszerzone odpowiadają `upstream_unavailable`.
+Stan widać w logu (`backend capability: probe=opensearch state=...`), w metryce `mcp_backend_capability{probe,state}`, w szczegółach
+`/actuator/health` (`backendCapability`) i w narzędziu `get_backend_info`. Zdarzenia audytu zmiany stanu nie ma (CC-208).
+
+Żadne wywołanie serwera nie różni się między 2.x a 3.x: wszystkie endpointy istnieją od OpenSearch 1.x, więc nie ma adapterów per wersja.
 
 ### Polityki, zakres i klasyfikacja (M3)
 
@@ -236,7 +338,7 @@ certyfikatów i sekretów. Gateway'a nie ma, więc każde żądanie z JWT kończ
 służy do sprawdzenia, że serwer wstaje i odrzuca ruch bez JWT. Narzędzia sprawdzają testy (`./mvnw verify`).
 
 ```bash
-export JAVA_HOME=/opt/homebrew/Cellar/openjdk@25/25.0.4.1/libexec/openjdk.jdk/Contents/Home
+export JAVA_HOME="$(/usr/libexec/java_home -v 25)"      # macOS; na Linuksie katalog JDK 25
 ./mvnw -B verify
 SPRING_PROFILES_ACTIVE=dev MCP_PORT=18541 "$JAVA_HOME/bin/java" -jar mcp-app/target/mcp-opensearch.jar
 # w drugim terminalu:
@@ -272,8 +374,8 @@ Magazyny PKCS12 i Redis są chronione hasłami z `$MCP_PLATFORM_DEV/.secrets/dev
 ich odczytu.
 
 ```bash
-export JAVA_HOME=/opt/homebrew/Cellar/openjdk@25/25.0.4.1/libexec/openjdk.jdk/Contents/Home
-export MCP_PLATFORM_DEV=<workspace>/mcp-platform-dev           # ścieżka bezwzględna
+export JAVA_HOME="$(/usr/libexec/java_home -v 25)"      # macOS; na Linuksie katalog JDK 25
+export MCP_PLATFORM_DEV="$HOME/src/mcp-platform-dev"        # ścieżka bezwzględna do katalogu mcp-platform-dev
 export MCP_TLS_STORE_PASSWORD="$(grep '^TLS_STORE_PASSWORD=' "$MCP_PLATFORM_DEV/.secrets/dev.env" | cut -d= -f2-)"
 export MCP_REDIS_PASSWORD="$(grep '^REDIS_MCP_OPENSEARCH_PASSWORD=' "$MCP_PLATFORM_DEV/.secrets/dev.env" | cut -d= -f2-)"
 export MCP_TLS_KEYSTORE="$MCP_PLATFORM_DEV/certs/mcp-opensearch/keystore.p12"

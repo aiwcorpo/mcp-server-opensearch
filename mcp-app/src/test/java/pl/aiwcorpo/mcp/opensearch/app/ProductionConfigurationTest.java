@@ -72,7 +72,7 @@ class ProductionConfigurationTest {
         assertThatCode(() -> adapter("https://backend.internal", new MockEnvironment())).doesNotThrowAnyException();
 
         assertThatCode(() -> new OpenSearchAdapter(
-                new OpenSearchBackendProperties("http://opensearch.internal:9200", null, null, null, null, true, null), searchDefaults(),
+                new OpenSearchBackendProperties("http://opensearch.internal:9200", null, null, null, null, true, false), searchDefaults(),
                 new DefaultListableBeanFactory().getBeanProvider(SslBundles.class), new MockEnvironment()))
                 .as("explicit opt-in for the dev environment's mocks").doesNotThrowAnyException();
 
@@ -98,7 +98,7 @@ class ProductionConfigurationTest {
     }
 
     private static OpenSearchAdapter adapter(String baseUrl, MockEnvironment environment) {
-        return new OpenSearchAdapter(new OpenSearchBackendProperties(baseUrl, null, null, null, null, false, null),
+        return new OpenSearchAdapter(new OpenSearchBackendProperties(baseUrl, null, null, null, null, false, false),
                 searchDefaults(), new DefaultListableBeanFactory().getBeanProvider(SslBundles.class), environment);
     }
 
@@ -140,13 +140,5 @@ class ProductionConfigurationTest {
             assertThatThrownBy(() -> new OpenSearchSearchProperties(null, null, null, null, null, null, null, bad))
                     .as(bad).isInstanceOf(IllegalStateException.class);
         }
-    }
-
-    @Test
-    void theProbeAuthorizationNeverShowsInTheTextOfTheProperties() {
-        OpenSearchBackendProperties properties = new OpenSearchBackendProperties("https://opensearch.internal:9200", null,
-                null, null, null, false, "Bearer probe-secret-7d1");
-
-        assertThat(properties.toString()).doesNotContain("probe-secret-7d1", "Bearer");
     }
 }

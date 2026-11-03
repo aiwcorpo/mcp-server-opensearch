@@ -20,7 +20,7 @@ class SearchLogsPagingTest extends ServerTestSupport {
         BACKEND.reset();
     }
 
-    /** The stub answers five raw hits, so a page of size 5 is full. */
+    /** The stub answers five raw hits whatever the size; two of them are the caller's, in two readable indices. */
     private static Map<String, Object> args(int size) {
         Map<String, Object> args = new HashMap<>();
         args.put("index_prefix", "logs-team-a");
@@ -54,11 +54,11 @@ class SearchLogsPagingTest extends ServerTestSupport {
     @Test
     void aFullPageHasACursorThatContinuesAfterTheLastHitOfTheAnswer() {
         try (McpSyncClient client = clientWithCredential(PAT)) {
-            McpSchema.CallToolResult first = call(client, "search_logs", args(5));
+            McpSchema.CallToolResult first = call(client, "search_logs", args(2));
 
             assertThat(first.isError()).as(text(first)).isFalse();
             assertThat(text(first)).contains("\"items\":[", "\"truncated\":false", "\"omitted\":[]");
-            Map<String, Object> next = args(5);
+            Map<String, Object> next = args(2);
             next.put("cursor", nextCursor(text(first)));
 
             McpSchema.CallToolResult second = call(client, "search_logs", next);
@@ -67,8 +67,9 @@ class SearchLogsPagingTest extends ServerTestSupport {
             assertThat(text(second)).contains("second page entry", "\"nextCursor\":null").doesNotContain("payment failed <script>");
         }
         assertThat(searches()).hasSize(2);
-        assertThat(searches().get(1).body()).as("the position of the last raw hit, the restricted one included")
-                .contains("\"search_after\":[1793091900000,\"evt-hr-2\"]");
+        assertThat(searches().get(1).body()).as("the position of the last hit the caller got, not of the restricted one the answer ended with")
+                .contains("\"search_after\":[1793059199000,\"evt-Ab0n8ZIBdLrT0q1aHf00\"]")
+                .doesNotContain("evt-hr-2", "1793091900000");
     }
 
     @Test
@@ -84,18 +85,18 @@ class SearchLogsPagingTest extends ServerTestSupport {
     void aCursorBelongsToItsQueryItsCallerAndItsTool() {
         String cursor;
         try (McpSyncClient client = clientWithCredential(PAT)) {
-            cursor = nextCursor(text(call(client, "search_logs", args(5))));
-            Map<String, Object> otherText = args(5);
+            cursor = nextCursor(text(call(client, "search_logs", args(2))));
+            Map<String, Object> otherText = args(2);
             otherText.put("text", "something else");
             otherText.put("cursor", cursor);
-            Map<String, Object> otherRange = args(5);
+            Map<String, Object> otherRange = args(2);
             otherRange.put("to", "2026-10-27T11:00:00Z");
             otherRange.put("cursor", cursor);
-            Map<String, Object> otherSize = args(4);
+            Map<String, Object> otherSize = args(3);
             otherSize.put("cursor", cursor);
-            Map<String, Object> forged = args(5);
+            Map<String, Object> forged = args(2);
             forged.put("cursor", cursor.substring(0, cursor.length() - 2) + "AA");
-            Map<String, Object> shapeless = args(5);
+            Map<String, Object> shapeless = args(2);
             shapeless.put("cursor", "not.a.cursor");
 
             for (Map<String, Object> arguments : List.of(otherText, otherRange, otherSize, forged, shapeless)) {
@@ -107,7 +108,7 @@ class SearchLogsPagingTest extends ServerTestSupport {
         }
         try (McpSyncClient other = clientAs(user -> user.subject("another-subject").username("mallory")
                 .groups(List.of(READ_GROUP, GRANT_TEAM_A, GRANT_TEAM_B)), PAT, CREDENTIAL_TYPE)) {
-            Map<String, Object> arguments = args(5);
+            Map<String, Object> arguments = args(2);
             arguments.put("cursor", cursor);
 
             assertInvalidArgument(call(other, "search_logs", arguments));
@@ -119,11 +120,11 @@ class SearchLogsPagingTest extends ServerTestSupport {
     void aCursorDoesNotWidenTheScopeOfALaterCall() {
         String cursor;
         try (McpSyncClient client = clientWithCredential(PAT)) {
-            cursor = nextCursor(text(call(client, "search_logs", args(5))));
+            cursor = nextCursor(text(call(client, "search_logs", args(2))));
         }
         BACKEND.reset();
         try (McpSyncClient narrower = clientInGroups(PAT, READ_GROUP)) {
-            Map<String, Object> arguments = args(5);
+            Map<String, Object> arguments = args(2);
             arguments.put("cursor", cursor);
 
             McpSchema.CallToolResult result = call(narrower, "search_logs", arguments);
@@ -132,5 +133,40 @@ class SearchLogsPagingTest extends ServerTestSupport {
             assertThat(text(result)).contains("\"items\":[]");
         }
         assertThat(BACKEND.requests()).as("no grant, nothing queried").isEmpty();
+    }
+
+    @Test
+    void aCursorHoldsNoSortValueNorIdOfAHitTheCallerMayNotSee() {
+        try (McpSyncClient client = clientWithCredential(PAT)) {
+            McpSchema.CallToolResult result = call(client, "search_logs", args(2));
+            String cursor = nextCursor(text(result));
+
+            assertThat(cursor).as("the position is encrypted").startsWith("c2.");
+            for (String hidden : List.of("evt-hr-2", "hr-2", "1793091900000", "salary", "evt-hr-1")) {
+                assertThat(cursor).doesNotContain(hidden);
+                assertThat(cursor).doesNotContain(java.util.Base64.getUrlEncoder().withoutPadding()
+                        .encodeToString(hidden.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+            }
+            assertThat(text(result)).doesNotContain("logs-team-a-hr-1", "salary list", "neighbour of the prefix");
+            Map<String, Object> next = args(2);
+            next.put("cursor", cursor);
+            call(client, "search_logs", next);
+        }
+        assertThat(searches().get(1).body()).as("the next page continues after the last hit the caller got")
+                .contains("\"search_after\":[1793059199000,\"evt-Ab0n8ZIBdLrT0q1aHf00\"]")
+                .doesNotContain("evt-hr-2", "1793091900000");
+    }
+
+    @Test
+    void aPageCutByTheSizeContinuesAfterTheLastHitItReturned() {
+        try (McpSyncClient client = clientWithCredential(PAT)) {
+            McpSchema.CallToolResult result = call(client, "search_logs", args(1));
+            Map<String, Object> next = args(1);
+            next.put("cursor", nextCursor(text(result)));
+            call(client, "search_logs", next);
+
+            assertThat(text(result)).contains("Xk3n8ZIBdLrT0q1aHf2p").doesNotContain("Ab0n8ZIBdLrT0q1aHf00");
+        }
+        assertThat(searches().get(1).body()).contains("\"search_after\":[1793092502123,\"evt-Xk3n8ZIBdLrT0q1aHf2p\"]");
     }
 }

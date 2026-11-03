@@ -226,7 +226,8 @@ class ExtendedToolsTest extends ServerTestSupport {
             String missing = text(call(client, "get_index_mapping", Map.of("index", "logs-team-a-missing")));
             assertThat(missing).contains(NOT_FOUND_OR_DENIED);
             for (String index : List.of("logs-team-a-hr-1", "logs-team-ab-1", "secret-hr-1", "logs-team-a-restricted",
-                    "logs-team-b-all", "logs-team-a-hidden")) {
+                    "logs-team-b-all", "logs-team-a-hidden", "logs-team-b-leak", "logs-team-b-two", "logs-team-b-filtered",
+                    "logs-team-a-all", "logs-team-b-stream")) {
                 McpSchema.CallToolResult result = call(client, "get_index_mapping", Map.of("index", index));
 
                 assertThat(result.isError()).as(index).isTrue();
@@ -302,12 +303,12 @@ class ExtendedToolsTest extends ServerTestSupport {
     }
 
     @Test
-    void theProbeUsesItsOwnAuthorizationAndNeverTheUsers() {
+    void theProbeAsksAnonymouslyAndNeverWithTheCredentialOfAUser() {
         try (McpSyncClient client = clientWithCredential(PAT)) {
             call(client, "get_backend_info", Map.of());
         }
-        assertThat(BACKEND.probeAuthorizations()).isNotEmpty().containsOnly(StubBackend.PROBE_CREDENTIAL);
-        assertThat(BACKEND.authorizations()).doesNotContain(StubBackend.PROBE_CREDENTIAL);
+        assertThat(BACKEND.probeAuthorizations()).isNotEmpty().containsOnly("null");
+        assertThat(BACKEND.authorizations()).doesNotContain("null");
     }
 
     private static String nextCursor(String result) {

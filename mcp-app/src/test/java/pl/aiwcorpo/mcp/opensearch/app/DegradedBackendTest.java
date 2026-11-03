@@ -9,16 +9,30 @@ import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.context.TestPropertySource;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
 
 /**
- * A cluster that refuses an anonymous {@code GET /} and a server without a probe authorization: the version is not
- * known, so the server runs in degraded mode. The core tools keep working, the ones that need verified APIs refuse.
+ * A cluster that refuses an anonymous {@code GET /}: the version is not known, so the server runs in degraded mode. The
+ * core tools keep working, the ones that need verified APIs refuse. The property below only gives this class a context
+ * of its own.
  */
-@TestPropertySource(properties = "opensearch.backend.probe-authorization=")
+@TestPropertySource(properties = "opensearch.backend.assume-tested-version=false")
 class DegradedBackendTest extends ServerTestSupport {
 
     private static final String PAT = "Bearer opensearch-token-of-jkowalski-5c1e";
     private static final String UNAVAILABLE = "\"error\":\"upstream_unavailable\"";
+
+    /** Runs before the context of this class is built, so the first probe meets the refusal. */
+    @BeforeAll
+    static void clusterRefusesAnonymousRoot() {
+        BACKEND.anonymousRoot(false);
+    }
+
+    @AfterAll
+    static void restoreRoot() {
+        BACKEND.anonymousRoot(true);
+    }
 
     @BeforeEach
     void resetBackend() {
@@ -30,7 +44,7 @@ class DegradedBackendTest extends ServerTestSupport {
         try (McpSyncClient client = clientWithCredential(PAT)) {
             McpSchema.CallToolResult result = call(client, "get_backend_info", Map.of());
 
-            assertThat(text(result)).contains("\"state\":\"degraded\"", "\"version\":null", "the root endpoint refused the request",
+            assertThat(text(result)).contains("\"state\":\"degraded\"", "\"version\":null", "the root endpoint refused an anonymous request",
                     "\"search\"", "\"get_document\"").doesNotContain("cluster_health", "list_indices", "validate_query");
         }
         assertThat(BACKEND.probeAuthorizations()).as("the probe asked anonymously").contains("null");

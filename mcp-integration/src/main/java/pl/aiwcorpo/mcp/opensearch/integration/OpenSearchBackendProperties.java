@@ -15,22 +15,18 @@ import org.springframework.util.unit.DataSize;
  * @param maxResponseSize larger bodies are cut off with an error instead of filling the heap
  * @param allowPlainHttp  {@code http} outside the dev profile, for the mocks of mcp-platform-dev only
  *                        ({@code MCP_OPENSEARCH_ALLOW_PLAIN_HTTP}); the credential then crosses the network in clear text
- * @param probeAuthorization complete {@code Authorization} header value for the version probe ({@code GET /}) only,
- *                        for clusters that refuse anonymous requests; never sent with a tool call. Empty = anonymous probe
+ * @param assumeTestedVersion what the version probe reports when {@code GET /} refuses the anonymous request (the usual
+ *                        answer of a cluster with the Security plugin): true = the operator states the cluster is OpenSearch
+ *                        2.x or 3.x and the server runs with the full feature set; false = degraded mode. The server holds
+ *                        no credential of its own, so the probe cannot log in
  */
 @ConfigurationProperties("opensearch.backend")
 public record OpenSearchBackendProperties(String baseUrl, String sslBundle, Duration connectTimeout,
-        Duration readTimeout, DataSize maxResponseSize, boolean allowPlainHttp, String probeAuthorization) {
+        Duration readTimeout, DataSize maxResponseSize, boolean allowPlainHttp, boolean assumeTestedVersion) {
 
     public OpenSearchBackendProperties {
         connectTimeout = connectTimeout == null ? Duration.ofSeconds(2) : connectTimeout;
         readTimeout = readTimeout == null ? Duration.ofSeconds(10) : readTimeout;
         maxResponseSize = maxResponseSize == null ? DataSize.ofMegabytes(1) : maxResponseSize;
-    }
-
-    /** Without the probe authorization: a record prints all its components. */
-    @Override
-    public String toString() {
-        return "OpenSearchBackendProperties[baseUrl=" + baseUrl + ", sslBundle=" + sslBundle + "]";
     }
 }

@@ -61,9 +61,10 @@ opensearch:
     max-response-size: 1MB
     # Plain http outside 'dev' only for the mocks of mcp-platform-dev; never in a real deployment.
     allow-plain-http: ${MCP_OPENSEARCH_ALLOW_PLAIN_HTTP:false}
-    # Authorization header value for the version probe (GET /) and nothing else. Empty = anonymous probe; a cluster
-    # with the Security plugin then answers 401 and the server runs in degraded mode (get_backend_info).
-    probe-authorization: ${MCP_OPENSEARCH_PROBE_AUTHORIZATION:}
+    # The version probe (GET /) is anonymous: the server holds no credential. A cluster with the Security plugin answers
+    # 401 and the server runs in degraded mode (get_backend_info). true = the operator states that the cluster is
+    # OpenSearch 2.x or 3.x and the server runs with the full feature set.
+    assume-tested-version: ${MCP_OPENSEARCH_ASSUME_TESTED_VERSION:false}
   # Index prefixes the server may touch at all (comma-separated). Each call is narrowed further to what the
   # caller's mcp-opensearch-idx-* groups grant (QueryScope); the server does not start without at least one.
   # Classification of indices for the policy (OpenSearch has no tags), e.g.

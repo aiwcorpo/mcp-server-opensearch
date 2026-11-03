@@ -8,8 +8,10 @@ import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.function.Predicate;
 import java.util.regex.Pattern;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
@@ -21,6 +23,7 @@ import pl.aiwcorpo.mcp.opensearch.core.domain.ClusterHealth;
 import pl.aiwcorpo.mcp.opensearch.core.domain.IndexMapping;
 import pl.aiwcorpo.mcp.opensearch.core.domain.IndexPage;
 import pl.aiwcorpo.mcp.opensearch.core.domain.LogCount;
+import pl.aiwcorpo.mcp.opensearch.core.domain.LogHit;
 import pl.aiwcorpo.mcp.opensearch.core.domain.LogPage;
 import pl.aiwcorpo.mcp.opensearch.core.domain.OpenSearchFeatures;
 import pl.aiwcorpo.mcp.opensearch.core.domain.QueryCheck;
@@ -103,6 +106,8 @@ public class OpenSearchTools {
     private static final int MAX_TIME = 40;
     private static final int DEFAULT_SIZE = 20;
     private static final int MAX_SIZE = 100;
+    /** Backend pages one {@code search_logs} call may read to fill its page. */
+    private static final int MAX_READS = 5;
     private static final int DEFAULT_INDEX_PAGE = 25;
     private static final int MAX_INDEX_PAGE = 50;
 
@@ -161,10 +166,33 @@ public class OpenSearchTools {
         String query = CursorCodec.fingerprint(SEARCH_LOGS, prefix, filter.text(), filter.level(), filter.service(),
                 start.toString(), end.toString(), Integer.toString(count));
         SearchAfter after = cursor == null ? null : position(cursors.open(cursor, SEARCH_LOGS, query));
-        LogPage page = useCase.searchLogs(new LogQuery(prefix, filter, start, end, count, after),
-                index -> policy.allows(indices.resource(index)));
-        SearchLogsResult kept = SearchLogsResult.of(page.hits());
-        SearchAfter resume = kept.truncated() ? kept.lastPosition() : page.next();
+        Predicate<String> readable = index -> policy.allows(indices.resource(index));
+        // The hits the policy refuses are removed afterwards by the starter; they are dropped here as well, so that the
+        // cursor can be made from the position of the last hit the caller gets and never from one it must not learn of.
+        // A page thinned out this way is filled from the next backend page, up to MAX_READS reads.
+        List<LogHit> allowed = new ArrayList<>();
+        SearchAfter lastRaw = null;
+        SearchAfter position = after;
+        for (int reads = 1; reads <= MAX_READS; reads++) {
+            LogPage page = useCase.searchLogs(new LogQuery(prefix, filter, start, end, count, position), readable);
+            page.hits().stream().filter(hit -> readable.test(hit.index())).forEach(allowed::add);
+            lastRaw = page.next();
+            if (lastRaw == null || allowed.size() >= count) {
+                break;
+            }
+            position = lastRaw;
+        }
+        boolean trimmed = allowed.size() > count;
+        SearchLogsResult kept = SearchLogsResult.of(trimmed ? allowed.subList(0, count) : allowed);
+        SearchAfter resume;
+        if (kept.hits().isEmpty()) {
+            // Nothing the caller may see in MAX_READS pages: the only position left is the one after the last page read.
+            resume = lastRaw;
+        } else if (kept.truncated() || trimmed || lastRaw != null) {
+            resume = kept.lastPosition();
+        } else {
+            resume = null;
+        }
         String next = resume == null ? null : cursors.issue(SEARCH_LOGS, query, resume.encode());
         return new PagedResult<>(kept.hits(), next, kept.truncated(), List.of());
     }

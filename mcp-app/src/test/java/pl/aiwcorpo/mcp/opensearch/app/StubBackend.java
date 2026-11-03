@@ -66,8 +66,6 @@ final class StubBackend {
     /** Resolve answers 404: no index of the scope exists. */
     static final String EMPTY_CLUSTER_CREDENTIAL = "Bearer fault-empty-cluster-token";
     static final String REDIRECT_CREDENTIAL = "Bearer fault-redirect-token";
-    /** The only credential {@code GET /} accepts, as a secured cluster would: the probe sends it from its own configuration. */
-    static final String PROBE_CREDENTIAL = "Bearer probe-token-of-the-server";
     /** {@code _validate/query} answers {@code valid: false} for the first index. */
     static final String INVALID_QUERY_CREDENTIAL = "Bearer fault-invalid-query-token";
     /** The total of a count is a lower bound ({@code relation: gte}). */
@@ -112,6 +110,7 @@ final class StubBackend {
     private final List<Request> requests = new CopyOnWriteArrayList<>();
     private final List<String> elsewhereHits = new CopyOnWriteArrayList<>();
     private final List<String> probeAuthorizations = new CopyOnWriteArrayList<>();
+    private volatile boolean anonymousRoot = true;
     private volatile String fixtures = FIXTURES_2_19;
 
     private StubBackend(HttpServer server, HttpServer elsewhere) {
@@ -167,6 +166,11 @@ final class StubBackend {
         return List.copyOf(probeAuthorizations);
     }
 
+    /** false: {@code GET /} answers 401 to an anonymous request, as a cluster with the Security plugin does. */
+    void anonymousRoot(boolean allowed) {
+        this.anonymousRoot = allowed;
+    }
+
     /** Which directory of {@code opensearch-fixtures} answers the version-dependent endpoints. */
     void useFixtures(String directory) {
         this.fixtures = directory;
@@ -195,7 +199,7 @@ final class StubBackend {
         String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
         if ("/".equals(path) && "GET".equals(exchange.getRequestMethod())) {
             probeAuthorizations.add(String.valueOf(authorization));
-            if (PROBE_CREDENTIAL.equals(authorization)) {
+            if (anonymousRoot) {
                 respond(exchange, 200, fixture("root.json"));
             } else {
                 respond(exchange, 401, "{\"error\":\"Unauthorized\"}");

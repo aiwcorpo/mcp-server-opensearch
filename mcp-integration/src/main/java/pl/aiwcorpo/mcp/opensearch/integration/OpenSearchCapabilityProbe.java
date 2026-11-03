@@ -5,7 +5,6 @@ import java.util.Optional;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.ssl.SslBundles;
 import org.springframework.core.env.Environment;
-import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClient;
@@ -17,9 +16,11 @@ import pl.aiwcorpo.mcp.platform.capability.ProductVersion;
 /**
  * Reads {@code GET /} of the cluster once at startup and then on the interval of the platform: the version and the
  * distribution decide whether the server runs with the verified feature set (OpenSearch 2.x and 3.x) or with the
- * baseline. The probe has no user, so it sends no credential of a user. A cluster with the Security plugin usually
- * refuses an anonymous {@code GET /} with 401: that is an answer, but without a version, so the state is
- * {@code degraded} until {@code opensearch.backend.probe-authorization} gives the probe a header of its own.
+ * baseline. The probe has no user and the server holds no credential of its own, so the request is anonymous. A cluster
+ * with the Security plugin usually refuses it with 401: that is an answer, but without a version, so the state is
+ * {@code degraded}, unless the operator states that the cluster is a tested version
+ * ({@code opensearch.backend.assume-tested-version}). A service credential for the probe would be a decision of the
+ * broker (CC-215).
  *
  * <p>Only the version number and the distribution name are read from the answer; the cluster name, node name and
  * build data are ignored.
@@ -35,12 +36,11 @@ public class OpenSearchCapabilityProbe implements CapabilityProbe {
     private static final String DEV_PROFILE = "dev";
 
     private final RestClient client;
-    private final String authorization;
+    private final boolean assumeTested;
 
     public OpenSearchCapabilityProbe(OpenSearchBackendProperties properties, ObjectProvider<SslBundles> sslBundles,
             Environment environment) {
-        this.authorization = properties.probeAuthorization() == null || properties.probeAuthorization().isBlank()
-                ? null : properties.probeAuthorization().strip();
+        this.assumeTested = properties.assumeTestedVersion();
         this.client = RestClient.builder()
                 .baseUrl(OpenSearchAdapter.requireBaseUrl(properties.baseUrl(),
                         environment.matchesProfiles(DEV_PROFILE) || properties.allowPlainHttp()))
@@ -59,17 +59,13 @@ public class OpenSearchCapabilityProbe implements CapabilityProbe {
     public Capabilities probe() {
         RootResponse root;
         try {
-            root = client.get().uri("/")
-                    .headers(headers -> {
-                        if (authorization != null) {
-                            headers.set(HttpHeaders.AUTHORIZATION, authorization);
-                        }
-                    })
-                    .retrieve()
-                    .body(RootResponse.class);
+            root = client.get().uri("/").retrieve().body(RootResponse.class);
         } catch (HttpClientErrorException.Unauthorized | HttpClientErrorException.Forbidden refused) {
+            if (assumeTested) {
+                return Capabilities.supported("unknown", OpenSearchFeatures.TESTED);
+            }
             return Capabilities.degraded(null, OpenSearchFeatures.BASELINE,
-                    "the root endpoint refused the request - set the probe authorization to read the version");
+                    "the root endpoint refused an anonymous request - the version is unknown");
         }
         return classify(root);
     }
