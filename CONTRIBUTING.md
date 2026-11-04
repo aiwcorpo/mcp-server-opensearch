@@ -7,13 +7,13 @@ needs approval before it is implemented here.
 ## Setup
 
 JDK 25. Tests need no container runtime. Linux and macOS with bash 3.2 or newer; Windows only through WSL2. The platform artifacts
-must be in `~/.m2` or in the registry named by `MCP_MAVEN_REPOSITORY_URL` (see the README of `mcp-starter-lib`).
+come from Maven Central or must be in `~/.m2` (see the README of `mcp-starter-lib`).
 
 ```bash
 ci/run.sh verify     # text checks, then clean verify; the same script runs in CI
 ```
 
-A new tool follows `docs/jak-napisac-narzedzie.md`: closed argument schema, a resource argument or a `@ResourceRef` on every result
+A new tool follows the [tool guide](https://github.com/aiwcorpo/mcp-docs/blob/main/docs/developer/tools.md) in `mcp-docs`: closed argument schema, a resource argument or a `@ResourceRef` on every result
 element that names an index, no query language from the model, a test for each refusal.
 
 ## Commits

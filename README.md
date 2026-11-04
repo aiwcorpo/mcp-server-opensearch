@@ -54,8 +54,10 @@ Nine tools, all `READ_ONLY` with action `read`. The client sees them as `opensea
 
 Risk, action and the group a call requires for every tool are in the generated
 [tool reference](https://github.com/aiwcorpo/mcp-docs/blob/main/docs/reference/tools.md)
-(`docs/reference/tools.md` in `mcp-docs`). `docs/api/tools-catalog.md` in this repository lists arguments and results. Tools that
-work on indices also need at least one scope group, `mcp-opensearch-idx-<prefix>`, from the policy bundle.
+(`docs/reference/tools.md` in `mcp-docs`). The tools that read logs and indices need the group `mcp-opensearch-read`;
+`get_cluster_health` and `get_backend_info` describe the whole cluster and need `mcp-opensearch-ops` instead
+(`policies/opensearch/call.cedar` in `mcp-policies`). Tools that work on indices also need at least one scope group,
+`mcp-opensearch-idx-<prefix>`, from the policy bundle.
 
 Behaviour worth knowing before you deploy:
 
@@ -80,7 +82,7 @@ make ci              # ci/run.sh verify: text checks, clean verify, required tes
 Tests need no Docker and no platform environment. `TestGateway` from `mcp-platform-test` signs internal JWTs, and `StubBackend`
 imitates the OpenSearch REST API, including aliases, data streams, hidden indices and broken responses. It is not a real cluster.
 
-Platform artifacts (`mcp-platform-bom`, contracts) come from the GitHub Packages registry of `aiwcorpo` or from `~/.m2`;
+Platform artifacts (`mcp-platform-bom`, contracts) come from Maven Central or from `~/.m2`;
 the setup is described in the README of `mcp-starter-lib`. Linux and macOS with bash 3.2 or newer; Windows only through WSL2.
 
 The build writes `mcp-app/target/mcp-manifest.json`. That file, not the answer of a running server, is what CI registers with
@@ -122,7 +124,7 @@ the first run. `do_not_fail_on_forbidden: true` in the role makes a list that in
 ## Install
 
 The server is one jar or one image. For a VM with systemd use `deploy/scripts/install.sh mcp-app/target/mcp-opensearch.jar` and the
-environment template `deploy/systemd/mcp-opensearch.env.template`; `docs/operations/deployment-vm-systemd.md` has the steps. For a
+environment template `deploy/systemd/mcp-opensearch.env.template`; the [VM installation guide](https://github.com/aiwcorpo/mcp-docs/blob/main/docs/operator/install-vm.md) in `mcp-docs` has the steps. For a
 container run `docker build -t mcp-opensearch:<tag> .` after `./mvnw verify` (image `eclipse-temurin:25-jre`, user `mcp`,
 port 8443). Operating notes, upgrades and troubleshooting are in `mcp-docs`.
 
@@ -144,15 +146,11 @@ reason it listens on loopback only, and the starter refuses to start `dev` on an
 container that the gateway connects to, and never put `SPRING_PROFILES_ACTIVE=dev` into an `.env` file, a systemd unit or an
 image. To run against the `mcp-platform-dev` environment with mTLS, see `mcp-docs`.
 
-## Documentation in this repository
+## Documentation
 
-- `docs/jak-napisac-narzedzie.md`: how to add a tool.
-- `docs/architecture/overview.md`: architecture and decisions.
-- `docs/security/SECURITY.md`: security invariants of this server.
-- `docs/api/tools-catalog.md`: tool registry.
-- `docs/operations/deployment-vm-systemd.md`, `deploy/`, `Dockerfile`: deployment.
+The guides for developers, operators and administrators are in [`mcp-docs`](https://github.com/aiwcorpo/mcp-docs). Deployment files: `deploy/`, `Dockerfile`.
 
-These pages are still in Polish. Vulnerability reports: `SECURITY.md`. Contributions: `CONTRIBUTING.md`. Changes: `CHANGELOG.md`.
+Vulnerability reports: `SECURITY.md`. Contributions: `CONTRIBUTING.md`. Changes: `CHANGELOG.md`.
 
 ## License
 

@@ -1,6 +1,6 @@
 # deploy/
 
-Running the server on a VM under systemd. Step by step: `docs/operations/deployment-vm-systemd.md` (in Polish).
+Running the server on a VM under systemd. Step by step: the [VM installation guide](https://github.com/aiwcorpo/mcp-docs/blob/main/docs/operator/install-vm.md) in `mcp-docs`.
 The container image is built from the `Dockerfile` in the repository root.
 
 ```
