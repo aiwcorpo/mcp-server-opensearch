@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # Single CI entry point: GitLab, Jenkins, GitHub Actions, the container image of the build and a developer's shell all
 # call this script and nothing else; .gitlab-ci.yml, Jenkinsfile and .github/workflows/ci.yml are thin wrappers. Needs
-# bash, git and, for verify, a JDK 25 and either a filled ~/.m2 with the platform artifacts or MCP_MAVEN_REPOSITORY_URL
-# (+ _USER and _PASSWORD on the main branch) pointing at the registry that holds them.
+# bash, git and, for verify, a JDK 25 and the platform artifacts, from Maven Central or from a filled ~/.m2.
 #
 #   ci/run.sh                 verify (default)
 #   ci/run.sh verify          hygiene checks, then mvnw verify (unit tests and the tests of the whole server against
@@ -14,29 +13,13 @@
 # CI_TEST_MODULES (default: mcp-application mcp-integration mcp-tools mcp-app) lists the modules that must have run tests, CI_APP_MIN_TESTS the
 # floor for mcp-app, CI_IMAGE_TAG_PREFIX (default m6) the prefix of the image tag mcp-server-<system>:<prefix>-<sha7>.
 # Any other argument is an error (exit 2). The tests need no container runtime, so a merge request pipeline mounts no
-# Docker socket and holds no secret: without the credentials of the registry the build reads it anonymously.
+# Docker socket and holds no secret.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root"
 
-# Maven settings file for the registry: with credentials only when the pipeline holds them (main), anonymous otherwise.
-maven_settings() {
-  if [[ -z "${MCP_MAVEN_REPOSITORY_URL:-}" ]]; then
-    return 0
-  fi
-  if [[ -n "${MCP_MAVEN_REPOSITORY_USER:-}" && -n "${MCP_MAVEN_REPOSITORY_PASSWORD:-}" ]]; then
-    echo "$root/.ci/settings.xml"
-  else
-    echo "$root/.ci/settings-anonymous.xml"
-  fi
-}
-
 mvnw() {
-  local settings=()
-  if [[ -n "$(maven_settings)" ]]; then
-    settings=(-s "$(maven_settings)")
-  fi
-  ./mvnw -B ${settings[@]+"${settings[@]}"} "$@"
+  ./mvnw -B "$@"
 }
 
 tracked_sources() {

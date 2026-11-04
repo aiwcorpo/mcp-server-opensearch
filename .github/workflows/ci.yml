@@ -1,8 +1,7 @@
 # Thin wrapper: all logic is in ci/run.sh.
-# No job holds a write permission and no secret is used: the platform artifacts (mcp-contracts, mcp-platform-starter) are
-# read from GitHub Packages (MCP_MAVEN_REPOSITORY_URL is a repository variable) with the GITHUB_TOKEN of the run, which
-# carries packages: read only (the package must grant access to this repository). A pull request runs unreviewed code
-# without the Docker socket. The image job builds the image from the jar of the verify job and pushes nothing.
+# No job holds a write permission and no secret is used: the platform artifacts (mcp-contracts, mcp-platform-starter) come
+# from Maven Central. A pull request runs unreviewed code without the Docker socket. The image job builds the image from
+# the jar of the verify job and pushes nothing.
 name: ci
 on:
   push:
@@ -16,13 +15,8 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
-      packages: read
     container:
       image: maven:3.9.12-eclipse-temurin-25@sha256:4f82a03a7d6679281952d628131299b1be88d7030a49c6a2b7d2ba2642e44e3e
-    env:
-      MCP_MAVEN_REPOSITORY_URL: ${{ vars.MCP_MAVEN_REPOSITORY_URL }}
-      MCP_MAVEN_REPOSITORY_USER: ${{ github.actor }}
-      MCP_MAVEN_REPOSITORY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -35,13 +29,8 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
-      packages: read
     container:
       image: maven:3.9.12-eclipse-temurin-25@sha256:4f82a03a7d6679281952d628131299b1be88d7030a49c6a2b7d2ba2642e44e3e
-    env:
-      MCP_MAVEN_REPOSITORY_URL: ${{ vars.MCP_MAVEN_REPOSITORY_URL }}
-      MCP_MAVEN_REPOSITORY_USER: ${{ github.actor }}
-      MCP_MAVEN_REPOSITORY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
