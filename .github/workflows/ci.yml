@@ -11,7 +11,7 @@ permissions: {}
 jobs:
   verify-pull-request:
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: read
@@ -25,7 +25,7 @@ jobs:
       - run: ci/run.sh verify
   verify-main:
     if: github.event_name == 'push'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: read
@@ -47,7 +47,7 @@ jobs:
   image:
     needs: verify-main
     if: github.event_name == 'push'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
       contents: read

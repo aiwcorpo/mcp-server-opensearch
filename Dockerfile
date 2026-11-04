@@ -2,7 +2,8 @@
 # Not an Alpine/musl base: mcp-cedar-entities loads the native cedar-java library, built for glibc.
 FROM eclipse-temurin:25-jre@sha256:78f1f183913482ef390c2722f46c3f0ce76ada341d69590e7c482ec943ee72d5
 
-LABEL org.opencontainers.image.source="https://github.com/aiwcorpo/mcp-server-opensearch"
+LABEL org.opencontainers.image.source="https://github.com/aiwcorpo/mcp-server-opensearch" \
+      org.opencontainers.image.licenses="Apache-2.0"
 
 RUN groupadd --system mcp && useradd --system --gid mcp --no-create-home --home-dir /app mcp
 WORKDIR /app

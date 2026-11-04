@@ -1,0 +1,118 @@
+# Builds the image of a tagged release, pushes it to ghcr.io/aiwcorpo/mcp-server-opensearch and attaches the registration
+# manifest and the SBOM (CycloneDX) to the GitHub Release. Runs only on a v* tag; nothing is pushed from branches. Not run
+# yet: the repository and the organization packages do not exist at the time of writing, so the workflow is checked by
+# reading, not by a run.
+#
+# Setup, once: environment "release" with required reviewers and a deployment rule for tags v*. The platform artifacts come
+# from Maven Central, so no job needs a registry login or a token to build.
+#
+# Three jobs. verify (contents: read) runs the tests, builds the manifest, the SBOM and the image
+# (docker save) and hands them over as one artifact; all build tools run only here. publish (packages: write) has no
+# checkout and no build tool: it loads the image and pushes it, the token only in the environment of the push step.
+# release (contents: write) has no checkout and no build tool either: it creates the GitHub Release from the artifact,
+# the token only in the environment of that step.
+name: release
+
+on:
+  push:
+    tags: ['v[0-9]+.[0-9]+.[0-9]+*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
+        with:
+          distribution: temurin
+          java-version: '25'
+      - name: Tag matches the project version
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          test "$(./mvnw -q -B -N org.apache.maven.plugins:maven-help-plugin:3.5.1:evaluate -Dexpression=project.version -DforceStdout)" = "$version"
+      - name: Verify (tests, manifest)
+        run: ci/run.sh verify
+      - name: SBOM (CycloneDX)
+        run: ./mvnw -B org.cyclonedx:cyclonedx-maven-plugin:2.9.1:makeAggregateBom
+      - name: Build the image and save it
+        run: |
+          mkdir -p dist
+          docker build -t "ghcr.io/aiwcorpo/mcp-server-opensearch:${GITHUB_REF_NAME#v}" .
+          docker save "ghcr.io/aiwcorpo/mcp-server-opensearch:${GITHUB_REF_NAME#v}" -o dist/image.tar
+          cp mcp-app/target/mcp-manifest.json target/bom.json target/bom.xml dist/
+      - name: Check the artifact file list
+        run: |
+          unexpected="$(cd dist && find . -mindepth 1 | sed 's|^\./||' | grep -Evx 'image\.tar|mcp-manifest\.json|bom\.(json|xml)' || true)"
+          if [ -n "$unexpected" ]; then echo "unexpected files in the artifact:" >&2; echo "$unexpected" >&2; exit 1; fi
+          test -f dist/image.tar -a -f dist/mcp-manifest.json -a -f dist/bom.json -a -f dist/bom.xml
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release
+          path: dist/
+          retention-days: 7
+          if-no-files-found: error
+
+  publish:
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: release
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release
+          path: dist
+      - name: Check the artifact file list
+        run: |
+          unexpected="$(cd dist && find . -mindepth 1 | sed 's|^\./||' | grep -Evx 'image\.tar|mcp-manifest\.json|bom\.(json|xml)' || true)"
+          if [ -n "$unexpected" ]; then echo "unexpected files in the artifact:" >&2; echo "$unexpected" >&2; exit 1; fi
+          test -f dist/image.tar -a -f dist/mcp-manifest.json -a -f dist/bom.json -a -f dist/bom.xml
+      - name: Load the image
+        run: docker load -i dist/image.tar
+      - name: Push to ghcr.io
+        run: |
+          echo "$GITHUB_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker push "ghcr.io/aiwcorpo/mcp-server-opensearch:${GITHUB_REF_NAME#v}"
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  release:
+    needs: publish
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release
+          path: dist
+      - name: Check the artifact file list
+        run: |
+          unexpected="$(cd dist && find . -mindepth 1 | sed 's|^\./||' | grep -Evx 'image\.tar|mcp-manifest\.json|bom\.(json|xml)' || true)"
+          if [ -n "$unexpected" ]; then echo "unexpected files in the artifact:" >&2; echo "$unexpected" >&2; exit 1; fi
+          test -f dist/image.tar -a -f dist/mcp-manifest.json -a -f dist/bom.json -a -f dist/bom.xml
+      - name: Attach manifest and SBOM to the GitHub Release
+        run: |
+          flags=()
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then flags+=(--prerelease); fi
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag --title "$GITHUB_REF_NAME" "${flags[@]}" dist/mcp-manifest.json dist/bom.json dist/bom.xml
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
