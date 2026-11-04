@@ -5,7 +5,7 @@ and aggregate them, and inspect indices of a self-managed OpenSearch cluster tha
 reads: no tool changes data or cluster settings, and no tool accepts a query, an API path, SQL or PPL from the model. The
 server builds every request itself from values the model supplies (text, level, service, time range, index prefix).
 
-It is built on `mcp-platform-starter` 3.0.0-beta-14 (Java 25, Spring Boot 4.1.0, Spring AI 2.0.0, `mcp-contracts` 6.3.2) and
+It is built on `mcp-platform-starter` 3.0.0 (Java 25, Spring Boot 4.1.0, Spring AI 2.0.0, `mcp-contracts` 6.3.2) and
 runs only behind the platform gateway. It accepts traffic over mTLS with the gateway's internal JWT and answers 401 without it;
 there is no anonymous mode. Calls to OpenSearch carry the calling user's own credential (a token the credential broker
 exchanges for OpenSearch), so OpenSearch Security roles, DLS and FLS still apply.

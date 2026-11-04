@@ -11,7 +11,7 @@
     <parent>
         <groupId>pl.aiwcorpo.mcp.opensearch</groupId>
         <artifactId>mcp-opensearch-parent</artifactId>
-        <version>0.1.0-SNAPSHOT</version>
+        <version>1.0.0</version>
     </parent>
     <artifactId>mcp-integration</artifactId>
     <name>mcp-opensearch :: Integration (outbound adapters)</name>

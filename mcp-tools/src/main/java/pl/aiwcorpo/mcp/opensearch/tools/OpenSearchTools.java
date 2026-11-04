@@ -384,7 +384,7 @@ public class OpenSearchTools {
             + " version found at startup, whether it is a tested one (supported) or not (degraded, unavailable), and the"
             + " features available. Makes no request to OpenSearch.")
     @ToolRisk(RiskLevel.READ_ONLY)
-    @ToolTitle("Get backend info")
+    @ToolTitle("Get OpenSearch version and features")
     public BackendInfoResult getBackendInfo() {
         Capabilities found = capabilities.of(OpenSearchFeatures.PROBE);
         return new BackendInfoResult(found.state().name().toLowerCase(Locale.ROOT), found.backendVersion(),
