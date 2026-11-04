@@ -613,7 +613,7 @@ public class OpenSearchAdapter implements OpenSearchPort {
             if (!plainHttpAllowed) {
                 // The user's credential travels in a header; over http it would cross the network in clear text.
                 throw new IllegalStateException("opensearch.backend.base-url must use https outside the 'dev' profile "
-                        + "(opensearch.backend.allow-plain-http exists for the mocks of mcp-platform-dev only)");
+                        + "(opensearch.backend.allow-plain-http exists for the mocks of the dev stack only)");
             }
             log.warn("event=backend_plain_http detail=\"credentials go to the backend unencrypted\"");
         }

@@ -13,7 +13,7 @@ import org.springframework.util.unit.DataSize;
  * @param connectTimeout  time to open the connection
  * @param readTimeout     time for the whole response; the gateway gives up on the call soon after anyway
  * @param maxResponseSize larger bodies are cut off with an error instead of filling the heap
- * @param allowPlainHttp  {@code http} outside the dev profile, for the mocks of mcp-platform-dev only
+ * @param allowPlainHttp  {@code http} outside the dev profile, for the mocks of the dev stack only
  *                        ({@code MCP_OPENSEARCH_ALLOW_PLAIN_HTTP}); the credential then crosses the network in clear text
  * @param assumeTestedVersion what the version probe reports when {@code GET /} refuses the anonymous request (the usual
  *                        answer of a cluster with the Security plugin): true = the operator states the cluster is OpenSearch

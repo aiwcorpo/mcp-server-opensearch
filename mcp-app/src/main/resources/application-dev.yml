@@ -14,7 +14,7 @@ aiwcorpo:
         allow-test-keys: true
       credential:
         connect-url: ${MCP_CONNECT_URL:http://localhost:18090/connections?system={system}}
-      # Bundles of the dev stack's policy repository (mcp-policies, served by mcp-platform-dev). Run from the repository
+      # Bundles of the dev stack's policy repository (mcp-policies, served by the dev stack). Run from the repository
       # root so the relative key path resolves. Test keys are allowed here and nowhere else; tests replace all of this
       # with TestGateway.serverProperties().
       policy:

@@ -144,7 +144,7 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST -H 'Content-Type: application/j
 The `dev` profile accepts JWTs signed with the published test keys of the contracts and needs no client certificate. For that
 reason it listens on loopback only, and the starter refuses to start `dev` on another address. Never enable it on a host or in a
 container that the gateway connects to, and never put `SPRING_PROFILES_ACTIVE=dev` into an `.env` file, a systemd unit or an
-image. To run against the `mcp-platform-dev` environment with mTLS, see `mcp-docs`.
+image. The local dev stack is not public yet; to run the platform with mTLS use the Compose install in `mcp-docs` (`examples/compose`).
 
 ## Documentation
 

@@ -60,7 +60,7 @@ opensearch:
     read-timeout: 10s
     # A page of 100 logs with stack traces is a few MB; the tool cuts its own result at 900 KB.
     max-response-size: 4MB
-    # Plain http outside 'dev' only for the mocks of mcp-platform-dev; never in a real deployment.
+    # Plain http outside 'dev' only for the mocks of the dev stack; never in a real deployment.
     allow-plain-http: ${MCP_OPENSEARCH_ALLOW_PLAIN_HTTP:false}
     # The version probe (GET /) is anonymous: the server holds no credential. A cluster with the Security plugin answers
     # 401 and the server runs in degraded mode (get_backend_info). true = the operator states that the cluster is
