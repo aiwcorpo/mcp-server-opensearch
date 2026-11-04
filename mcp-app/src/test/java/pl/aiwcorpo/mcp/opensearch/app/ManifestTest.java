@@ -90,7 +90,7 @@ class ManifestTest extends ServerTestSupport {
     }
 
     @Test
-    void everyToolHasAPolishTitleAndAClosedInputSchema() throws Exception {
+    void everyToolHasATitleAndAClosedInputSchema() throws Exception {
         for (JsonNode tool : manifest().get("tools")) {
             assertThat(tool.at("/definition/title").asString()).isNotBlank();
             assertThat(tool.at("/definition/inputSchema/additionalProperties").asBoolean(true)).isFalse();

@@ -141,7 +141,7 @@ public class OpenSearchTools {
             + " id, timestamp and the configured log fields under 'data'. No total count. When more entries may"
             + " follow, nextCursor is set; pass it back with the same other arguments for the next page.")
     @ToolRisk(RiskLevel.READ_ONLY)
-    @ToolTitle("Szukaj w logach")
+    @ToolTitle("Search logs")
     public PagedResult<LogHitView> searchLogs(
             @ToolParam(description = "Index prefix p: covers the index named p and every index named p-..., no wildcard")
             @ArgumentLimits(contractPattern = "OpenSearchIndexPrefix", minLength = 1, maxLength = 255) String index_prefix,
@@ -218,7 +218,7 @@ public class OpenSearchTools {
             + " each with the value and its document count, and otherDocuments, the documents in groups left out. The optional text, level and service narrow the"
             + " documents as in search_logs. Aliases and data streams are not counted.")
     @ToolRisk(RiskLevel.READ_ONLY)
-    @ToolTitle("Zlicz logi według pola")
+    @ToolTitle("Aggregate logs")
     public AggregateLogsResult aggregateLogs(
             @ToolParam(description = "Index prefix p: covers the index named p and every index named p-..., no wildcard")
             @ArgumentLimits(contractPattern = "OpenSearchIndexPrefix", minLength = 1, maxLength = 255) String index_prefix,
@@ -261,7 +261,7 @@ public class OpenSearchTools {
     @Tool(name = GET_DOCUMENT, description = "Returns one document by index and id: index, id"
             + " and the configured fields under 'data'.")
     @ToolRisk(RiskLevel.READ_ONLY)
-    @ToolTitle("Pobierz dokument z logów")
+    @ToolTitle("Get document")
     public DocumentResult getDocument(
             @ToolParam(description = "One concrete index name (no wildcard, no list)")
             @ArgumentLimits(contractPattern = "OpenSearchIndexName", minLength = 1, maxLength = 255)
@@ -281,7 +281,7 @@ public class OpenSearchTools {
             + " time range. The optional text, level and service narrow the documents as in search_logs. Returns the"
             + " count and whether it is exact. Indices the caller may not read are not counted.")
     @ToolRisk(RiskLevel.READ_ONLY)
-    @ToolTitle("Policz logi")
+    @ToolTitle("Count logs")
     public CountLogsResult countLogs(
             @ToolParam(description = "Index prefix p: covers the index named p and every index named p-..., no wildcard")
             @ArgumentLimits(contractPattern = "OpenSearchIndexPrefix", minLength = 1, maxLength = 255) String index_prefix,
@@ -305,7 +305,7 @@ public class OpenSearchTools {
     @Tool(name = LIST_INDICES, description = "Lists the indices of one index prefix that the caller may read, by"
             + " name, with their health. Pass nextCursor from the previous result for the next page.")
     @ToolRisk(RiskLevel.READ_ONLY)
-    @ToolTitle("Wylistuj indeksy")
+    @ToolTitle("List indices")
     public PagedResult<IndexView> listIndices(
             @ToolParam(description = "Index prefix p: covers the index named p and every index named p-..., no wildcard")
             @ArgumentLimits(contractPattern = "OpenSearchIndexPrefix", minLength = 1, maxLength = 255) String index_prefix,
@@ -331,7 +331,7 @@ public class OpenSearchTools {
     @Tool(name = GET_INDEX_MAPPING, description = "Returns the fields of one index that this server queries, returns"
             + " or sorts by, with their mapping type, nested fields as dotted paths. Other fields of the index are not listed.")
     @ToolRisk(RiskLevel.READ_ONLY)
-    @ToolTitle("Pokaż mapowanie indeksu")
+    @ToolTitle("Get index mapping")
     public IndexMappingResult getIndexMapping(
             @ToolParam(description = "One concrete index name (no wildcard, no list)")
             @ArgumentLimits(contractPattern = "OpenSearchIndexName", minLength = 1, maxLength = 255)
@@ -348,7 +348,7 @@ public class OpenSearchTools {
             + " send for these arguments and how it reads it. Returns valid, the number of indices checked, the"
             + " indices that rejected it and the explanation of the first one. Reads no documents.")
     @ToolRisk(RiskLevel.READ_ONLY)
-    @ToolTitle("Sprawdź zapytanie do logów")
+    @ToolTitle("Validate query")
     public QueryCheckResult validateQuery(
             @ToolParam(description = "Index prefix p: covers the index named p and every index named p-..., no wildcard")
             @ArgumentLimits(contractPattern = "OpenSearchIndexPrefix", minLength = 1, maxLength = 255) String index_prefix,
@@ -371,7 +371,7 @@ public class OpenSearchTools {
     @Tool(name = GET_CLUSTER_HEALTH, description = "Returns the health of the whole cluster: status, number of nodes"
             + " and shard counts. No names of the cluster, nodes or indices.")
     @ToolRisk(RiskLevel.READ_ONLY)
-    @ToolTitle("Pokaż zdrowie klastra")
+    @ToolTitle("Get cluster health")
     public ClusterHealthResult getClusterHealth() {
         requireFeature(OpenSearchFeatures.CLUSTER_HEALTH);
         ClusterHealth health = useCase.clusterHealth();
@@ -384,7 +384,7 @@ public class OpenSearchTools {
             + " version found at startup, whether it is a tested one (supported) or not (degraded, unavailable), and the"
             + " features available. Makes no request to OpenSearch.")
     @ToolRisk(RiskLevel.READ_ONLY)
-    @ToolTitle("Pokaż wersję i zdolności OpenSearch")
+    @ToolTitle("Get backend info")
     public BackendInfoResult getBackendInfo() {
         Capabilities found = capabilities.of(OpenSearchFeatures.PROBE);
         return new BackendInfoResult(found.state().name().toLowerCase(Locale.ROOT), found.backendVersion(),
