@@ -39,9 +39,6 @@ ProcSubset=pid
 SystemCallFilter=@system-service
 SystemCallArchitectures=native
 UMask=0077
-# Last accepted policy bundle revision (MCP_POLICY_STATE_DIR=/var/lib/mcp-opensearch/policy-state).
-StateDirectory=mcp-opensearch
-StateDirectoryMode=0700
 
 [Install]
 WantedBy=multi-user.target

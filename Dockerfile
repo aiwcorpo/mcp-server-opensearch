@@ -10,6 +10,6 @@ WORKDIR /app
 COPY --chown=root:root mcp-app/target/mcp-opensearch.jar /app/app.jar
 
 USER mcp
-# mTLS from the gateway only (C3); certificates, policy keys and secrets come from the environment and mounted files.
+# mTLS from the gateway only (C3); certificates and secrets come from the environment and mounted files.
 EXPOSE 8443
 ENTRYPOINT ["java", "-XX:MaxRAMPercentage=75", "-XX:+ExitOnOutOfMemoryError", "-jar", "/app/app.jar"]
