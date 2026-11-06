@@ -2,6 +2,30 @@
 
 Versions follow SemVer, newest first.
 
+## 2.0.0
+
+Major release: the policies of the server live in this repository. Built on `mcp-platform-starter` 4.0.0 and `mcp-contracts` 7.0.0.
+
+- Cedar policies in `mcp-app/src/main/resources/mcp/policies/` (schema in the namespace `OpenSearch`, `resource-types.json`, `read.cedar`,
+  `update.cedar`), carried in the manifest with `policiesHash`. They replace `policies/opensearch/` of the `mcp-policies` repository;
+  the resource rules are the same, except what the platform now generates for every server: the forbid for indices tagged
+  `restricted` and the rule for the service account.
+- The call rules by group are now the platform's. `get_cluster_health` and `get_backend_info` no longer need `mcp-opensearch-ops`:
+  `mcp-opensearch-read` opens them like every other read tool.
+- A deployed server whose policies or declarations changed waits for approval in the gateway: it refuses calls (`policies_not_approved`,
+  `policies_differ`) until an administrator approves the new `policiesHash`. Register the new manifest and approve before the first call.
+- The index resolver gives an index the scope of every dash prefix of its name that can be granted (the entity builder did this
+  before) and provides the grant probe (`probe(id)`), so a caller without a grant is refused before OpenSearch is asked. The index
+  argument takes its pattern from the declared type (`@ArgumentLimits(resourceType = ...)`); the prefix argument publishes the same
+  pattern as before, so no `definitionHash` changes because of it.
+- Removed: `MCP_POLICY_URL`, `MCP_POLICY_KEY_ID`, `MCP_POLICY_PUBLIC_KEY_FILE`, `MCP_POLICY_STATE_DIR`, the signed policy bundle and the
+  `StateDirectory` of the unit. Added: `MCP_GATEWAY_POLICY_DATA_URL` (and `MCP_GATEWAY_TLS_NAME` when the host in it is not a name of the
+  gateway certificate). The server connects to the gateway for the policy data with its own certificate, which now needs the usage
+  `clientAuth` next to `serverAuth` (CN `mcp-opensearch`, SAN `mcp-opensearch.internal`).
+- `deploy/` has `compose.yaml`, `mcp-opensearch.env` and `certs/` next to the systemd files, and the procedure that adds the system
+  `opensearch` in the broker and the server `mcp-opensearch` in the gateway without restarting anything.
+- `.run/` has IntelliJ configurations for the server and for the `LocalGateway` of `mcp-platform-test`, with the policies directory and a scope mapping.
+
 ## 1.0.0 - 2026-11-04
 
 First public release. Built on `mcp-platform-starter` 3.0.0 (contracts 6.3.2).
