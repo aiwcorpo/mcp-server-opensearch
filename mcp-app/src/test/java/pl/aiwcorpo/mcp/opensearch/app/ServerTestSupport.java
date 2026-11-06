@@ -11,9 +11,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.time.Duration;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Set;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -40,15 +38,19 @@ abstract class ServerTestSupport {
     static final String SERVER_ID = "mcp-opensearch";
     static final String SYSTEM = "opensearch";
     static final String READ_GROUP = "mcp-opensearch-read";
-    static final String OPS_GROUP = "mcp-opensearch-ops";
-    /** Groups of the example bundle of the contracts that grant the index prefixes logs-team-a and logs-team-b. */
+    /** Groups the scope mapping of {@link #GATEWAY} maps to the index prefixes logs-team-a and logs-team-b. */
     static final String GRANT_TEAM_A = "mcp-opensearch-idx-logs-team-a";
     static final String GRANT_TEAM_B = "mcp-opensearch-idx-logs-team-b";
     static final String ENDPOINT = "/mcp";
     static final String CREDENTIAL_TYPE = "token-exchange";
-    static final Set<String> CONTRACT_SYSTEMS = contractSystems();
 
     static final TestGateway GATEWAY = TestGateway.start(SERVER_ID);
+
+    static {
+        GATEWAY.policyData().scopeMapping(Map.of(
+                GRANT_TEAM_A, List.of("OpenSearch::Index/logs-team-a"),
+                GRANT_TEAM_B, List.of("OpenSearch::Index/logs-team-b")));
+    }
     static final StubBackend BACKEND = StubBackend.start();
 
     @DynamicPropertySource
@@ -108,7 +110,7 @@ abstract class ServerTestSupport {
 
     /** The caller of most tests: allowed to use the read tools, granted both prefixes the server is configured for. */
     static void reader(TestGateway.Token user) {
-        user.username("jkowalski").groups(List.of(READ_GROUP, OPS_GROUP, GRANT_TEAM_A, GRANT_TEAM_B));
+        user.username("jkowalski").groups(List.of(READ_GROUP, GRANT_TEAM_A, GRANT_TEAM_B));
     }
 
     /** A caller in exactly these groups. */
@@ -135,26 +137,24 @@ abstract class ServerTestSupport {
         return client;
     }
 
-    /** The full C10 error with the portal link, never {@code internal_error}: the system is on the contracts' list. */
+    /** A C10 {@code credential_required} with the portal link of the system, as the user is meant to see it. */
     static void assertCredentialRequired(McpSchema.CallToolResult result) {
         assertThat(result.isError()).isTrue();
         assertThat(text(result)).contains("\"error\":\"credential_required\"", "\"system\":\"" + SYSTEM + "\"",
                 "\"connectUrl\":\"http://localhost:18090/connections?system=" + SYSTEM + "\"");
     }
 
-    /** A real server's system is one of the contracts'. */
+    /** The system id must be one the contracts accept: {@code mcp-<system>} is the server id and the CN of its certificate. */
     @Test
-    void contractSystemIsKnown() {
-        assertThat(CONTRACT_SYSTEMS).contains(SYSTEM);
+    void systemIsAnIdOfTheContracts() {
+        assertThat(SYSTEM).matches(systemIdPattern());
+        assertThat(SERVER_ID).isEqualTo("mcp-" + SYSTEM);
     }
 
-    private static Set<String> contractSystems() {
+    private static String systemIdPattern() {
         try (InputStream schema = ServerTestSupport.class.getClassLoader()
                 .getResourceAsStream("mcp-contracts/schemas/common.schema.json")) {
-            Set<String> systems = new HashSet<>();
-            JsonMapper.builder().build().readTree(schema).at("/$defs/SystemId/enum")
-                    .forEach(system -> systems.add(system.asString()));
-            return Set.copyOf(systems);
+            return JsonMapper.builder().build().readTree(schema).at("/$defs/SystemId/pattern").asString();
         } catch (IOException ex) {
             throw new UncheckedIOException(ex);
         }

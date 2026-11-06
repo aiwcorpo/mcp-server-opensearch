@@ -38,31 +38,30 @@ class ProductionConfigurationTest {
     }
 
     @Test
-    void theBaseConfigurationNeedsThePolicyBundleAndTheManifestButNeverAllowsTestKeys() throws IOException {
+    void theBaseConfigurationNeedsThePolicyDataAndTheManifestButNeverAllowsTestKeys() throws IOException {
         List<PropertySource<?>> documents = new YamlPropertySourceLoader()
                 .load("application.yml", new ClassPathResource("application.yml"));
         PropertySource<?> base = documents.getFirst();
 
-        for (String key : List.of("url", "key-id", "public-key-file")) {
-            assertThat(base.containsProperty("aiwcorpo.mcp.platform.policy.main." + key)).as(key).isTrue();
-        }
-        assertThat(base.containsProperty("aiwcorpo.mcp.platform.policy.state-dir")).isTrue();
+        assertThat(String.valueOf(base.getProperty("aiwcorpo.mcp.platform.policy-data.url"))).isEqualTo("${MCP_GATEWAY_POLICY_DATA_URL:}");
+        assertThat(String.valueOf(base.getProperty("aiwcorpo.mcp.platform.policy-data.tls-name"))).isEqualTo("${MCP_GATEWAY_TLS_NAME:}");
         assertThat(base.containsProperty("aiwcorpo.mcp.platform.manifest.version")).isTrue();
         assertThat(base.containsProperty("aiwcorpo.mcp.platform.manifest.internal-url")).isTrue();
         assertThat(base.containsProperty("aiwcorpo.mcp.platform.manifest.accepted-credential-types")).isTrue();
         assertThat(documents).allSatisfy(document -> {
-            assertThat(document.containsProperty("aiwcorpo.mcp.platform.policy.allow-test-keys")).isFalse();
             assertThat(document.containsProperty("aiwcorpo.mcp.platform.internal-jwt.allow-test-keys")).isFalse();
         });
+        assertThat(documents).allSatisfy(document -> assertThat(((org.springframework.core.env.EnumerablePropertySource<?>) document)
+                .getPropertyNames()).noneMatch(key -> key.startsWith("aiwcorpo.mcp.platform.policy.")));
     }
 
     @Test
-    void testKeysAndThePolicyRepositoryOfTheDevStackAreConfiguredInDevOnly() throws IOException {
+    void testKeysAndThePolicyDataOfTheLocalGatewayAreConfiguredInDevOnly() throws IOException {
         Map<String, Object> dev = (Map<String, Object>) new YamlPropertySourceLoader()
                 .load("application-dev.yml", new ClassPathResource("application-dev.yml")).getFirst().getSource();
 
-        assertThat(String.valueOf(dev.get("aiwcorpo.mcp.platform.policy.allow-test-keys"))).isEqualTo("true");
-        assertThat(String.valueOf(dev.get("aiwcorpo.mcp.platform.policy.main.url"))).contains("http://127.0.0.1:");
+        assertThat(String.valueOf(dev.get("aiwcorpo.mcp.platform.internal-jwt.allow-test-keys"))).isEqualTo("true");
+        assertThat(String.valueOf(dev.get("aiwcorpo.mcp.platform.policy-data.url"))).contains("http://127.0.0.1:");
     }
 
     @Test

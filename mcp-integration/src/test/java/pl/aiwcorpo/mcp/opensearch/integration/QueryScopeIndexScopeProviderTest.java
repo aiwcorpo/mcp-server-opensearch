@@ -12,7 +12,7 @@ import pl.aiwcorpo.mcp.platform.resource.QueryScope;
 class QueryScopeIndexScopeProviderTest {
 
     private static QueryScope scope(List<String> granted) {
-        return QueryScope.of(new QueryConstraint("OpenSearch::Index", new TreeSet<>(granted)));
+        return QueryScope.of(new QueryConstraint("OpenSearch::Index", new TreeSet<>(granted)), IndexTypes.DECLARED);
     }
 
     private static IndexScope scopeOf(List<String> granted, String... configured) {

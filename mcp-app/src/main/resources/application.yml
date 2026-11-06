@@ -35,14 +35,11 @@ aiwcorpo:
       # same one; without it each instance draws its own and a cursor from one is refused by the other.
       paging:
         cursor-key: ${MCP_CURSOR_KEY:}
-      # The signed policy bundle (C7), the same one the gateway evaluates. The server does not start without a first
-      # bundle, and state-dir keeps the last accepted revision across restarts so an older signed bundle is refused.
-      policy:
-        main:
-          url: ${MCP_POLICY_URL:}
-          key-id: ${MCP_POLICY_KEY_ID:}
-          public-key-file: ${MCP_POLICY_PUBLIC_KEY_FILE:}
-        state-dir: ${MCP_POLICY_STATE_DIR:}
+      # Scope mapping, allowed AI clients and emergency overrides of the administrator, served by the gateway over mTLS with
+      # this server's own certificate (CN mcp-opensearch). The policies themselves are in this jar (mcp/policies/).
+      policy-data:
+        url: ${MCP_GATEWAY_POLICY_DATA_URL:}
+        tls-name: ${MCP_GATEWAY_TLS_NAME:}
       # Description of this server for the registry (GET /mcp-manifest, C6); the tool entries come from the code.
       manifest:
         version: '@project.version@'
@@ -66,8 +63,9 @@ opensearch:
     # 401 and the server runs in degraded mode (get_backend_info). true = the operator states that the cluster is
     # OpenSearch 2.x or 3.x and the server runs with the full feature set.
     assume-tested-version: ${MCP_OPENSEARCH_ASSUME_TESTED_VERSION:false}
-  # Index prefixes the server may touch at all (comma-separated). Each call is narrowed further to what the
-  # caller's mcp-opensearch-idx-* groups grant (QueryScope); the server does not start without at least one.
+  # Index prefixes the server may touch at all (comma-separated). Each call is narrowed further to the prefixes the
+  # administrator mapped to the caller's groups (OpenSearch::Index scopes, QueryScope); the server does not start without
+  # at least one.
   # Classification of indices for the policy (OpenSearch has no tags), e.g.
   #   index-tags:
   #     - prefix: logs-team-a-hr

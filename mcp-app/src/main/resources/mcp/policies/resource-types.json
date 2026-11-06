@@ -1,0 +1,9 @@
+[
+  {
+    "type": "OpenSearch::Index",
+    "attributes": ["name", "tags"],
+    "idPattern": "^[a-z0-9][a-z0-9._-]{0,254}$",
+    "scopePattern": "^(?:[a-z0-9][a-z0-9._-]{0,253}[a-z0-9_]|[a-z0-9])$",
+    "classification": {"attribute": "tags", "kind": "set", "required": true}
+  }
+]

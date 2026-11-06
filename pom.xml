@@ -12,7 +12,7 @@
 
     <groupId>pl.aiwcorpo.mcp.opensearch</groupId>
     <artifactId>mcp-opensearch-parent</artifactId>
-    <version>1.0.0</version>
+    <version>2.0.0</version>
     <packaging>pom</packaging>
     <name>mcp-opensearch :: Parent</name>
     <url>https://github.com/aiwcorpo/mcp-server-opensearch</url>
@@ -50,7 +50,7 @@
         <java.version>25</java.version>
         <maven.compiler.release>25</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <mcp-platform.version>3.0.0</mcp-platform.version>
+        <mcp-platform.version>4.0.0</mcp-platform.version>
     </properties>
 
     <dependencyManagement>

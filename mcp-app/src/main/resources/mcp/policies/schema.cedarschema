@@ -1,0 +1,20 @@
+// Fragment of mcp-opensearch: one namespace, the server's own. Base types (User, ResourceScope, RequestContext) are
+// referenced unqualified from the empty namespace of cedar/mcp.cedarschema. Every entity type has `scopes`.
+
+namespace OpenSearch {
+  entity Index {
+    name: String,
+    // Classification: required, from the server configuration (opensearch.scope.index-tags), [] for an index nobody
+    // tagged. The entity builder normalizes it (trim, ASCII lower case); the canonical value for restricted data is
+    // "restricted".
+    tags: Set<String>,
+    // Every dash prefix of the name that can be granted: logs, logs-team and logs-team-a for logs-team-a.
+    scopes: Set<ResourceScope>,
+  };
+
+  action "read", "update", "delete", "admin" appliesTo {
+    principal: [User],
+    resource: [Index],
+    context: RequestContext,
+  };
+}

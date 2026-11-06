@@ -89,7 +89,7 @@ class QueryScopeIndicesTest {
 
     private QueryScopeIndices indices() {
         return new QueryScopeIndices(() -> QueryScope.of(new QueryConstraint("OpenSearch::Index",
-                new TreeSet<>(granted))), port, new IndexScopeProperties(List.of("logs-team-a"), List.of()));
+                new TreeSet<>(granted)), IndexTypes.DECLARED), port, new IndexScopeProperties(List.of("logs-team-a"), List.of()));
     }
 
     @Test

@@ -25,13 +25,14 @@ import pl.aiwcorpo.mcp.platform.autoconfigure.McpPlatformProperties;
 import pl.aiwcorpo.mcp.platform.guard.ToolHintsPostProcessor;
 import pl.aiwcorpo.mcp.platform.guard.ToolRiskRegistry;
 import pl.aiwcorpo.mcp.platform.manifest.ManifestGenerator;
+import pl.aiwcorpo.mcp.platform.policy.ServerPolicies;
 
 /**
  * Writes the C6 manifest of this server at build time (maven phase {@code package}, see the pom), from the production
  * configuration ({@code application.yml}, no profile) and the tools as registered in {@link McpToolsConfiguration}.
  * This file, not the answer of a running server, is what the pipeline registers at the gateway (CC-133, CC-140).
  *
- * <p>It does not start the server: the base configuration needs TLS stores, Redis and a policy bundle. It runs the
+ * <p>It does not start the server: the base configuration needs TLS stores, Redis and the policy data of the gateway. It runs the
  * same {@link ManifestGenerator} with the same checks as the server at startup, so a manifest the gateway would
  * reject stops the build. {@code ManifestTest} compares the tools of this file with {@code tools/list} of the
  * running server. Usage: {@code ManifestExport <output file>}.
@@ -78,6 +79,9 @@ public final class ManifestExport {
         List<McpSchema.Tool> published = ((List<?>) hints.postProcessAfterInitialization(specifications, "tools")).stream()
                 .map(item -> ((McpServerFeatures.SyncToolSpecification) item).tool())
                 .toList();
-        return ManifestGenerator.generate(properties, registry, published, true);
+        // Read from the jar of this module, like the running server does: the policies and the declarations are part of
+        // what the gateway approves, so the registered manifest must carry exactly these files.
+        ServerPolicies policies = ServerPolicies.load(ManifestExport.class.getClassLoader());
+        return ManifestGenerator.generate(properties, registry, published, policies, true);
     }
 }

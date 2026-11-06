@@ -13,7 +13,7 @@ import pl.aiwcorpo.mcp.platform.resource.QueryScope;
 import pl.aiwcorpo.mcp.platform.resource.ResourcePolicy;
 
 /**
- * The scope of the current call: what the caller's {@code mcp-opensearch-idx-*} groups grant ({@link QueryScope}),
+ * The scope of the current call: what the scope mapping grants the caller's groups ({@link QueryScope}),
  * within the prefixes this server is configured for. OpenSearch enforces the user's rights on its own, but a grant
  * is narrower than those, so the query is limited to it.
  *

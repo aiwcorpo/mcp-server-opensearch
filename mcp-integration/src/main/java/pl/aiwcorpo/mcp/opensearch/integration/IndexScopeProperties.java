@@ -3,22 +3,23 @@ package pl.aiwcorpo.mcp.opensearch.integration;
 import java.util.List;
 import java.util.regex.Pattern;
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import pl.aiwcorpo.mcp.opensearch.core.domain.OpenSearchResourceModel;
 
 /**
  * Index prefixes this server may touch at all ({@code MCP_OPENSEARCH_INDEX_PREFIXES}) and the tags it gives to some
  * of them. Without any prefix the server does not start: an empty list would either allow nothing or tempt someone to
  * read it as "everything". The caller's own scope is the intersection of these prefixes with the grants of the
- * policy bundle.
+ * scope mapping.
  *
- * @param allowedIndexPrefixes grantable prefixes in the {@code OpenSearchIndexPrefix} form of mcp-contracts,
+ * @param allowedIndexPrefixes grantable prefixes in the {@code scopePattern} form of {@code OpenSearch::Index},
  *                             additionally not starting with {@code .} (hidden and system indices)
  * @param indexTags            classification of indices by prefix, for the policy ({@code restricted} closes them)
  */
 @ConfigurationProperties("opensearch.scope")
 public record IndexScopeProperties(List<String> allowedIndexPrefixes, List<IndexTags> indexTags) {
 
-    /** {@code OpenSearchIndexPrefix} of mcp-contracts 2.0.2 without the leading dot. */
-    private static final Pattern PREFIX = Pattern.compile("[a-z0-9][a-z0-9._-]{0,253}[a-z0-9_]|[a-z0-9]");
+    /** The {@code scopePattern} of {@code OpenSearch::Index}, which already excludes a leading dot. */
+    private static final Pattern PREFIX = Pattern.compile(OpenSearchResourceModel.INDEX_PREFIX_REGEX);
     private static final Pattern TAG = Pattern.compile("[a-z0-9][a-z0-9_-]{0,31}");
 
     /**

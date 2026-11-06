@@ -13,9 +13,9 @@ the model, or a credential in a log or a tool result is in scope.
 ## Scope
 
 In scope: the code of this server (`mcp-core`, `mcp-application`, `mcp-integration`, `mcp-tools`, `mcp-app`) and its deployment files
-under `deploy/`.
+under `deploy/`, including the Cedar policies in `mcp-app/src/main/resources/mcp/policies/`.
 
-Out of scope: the gateway, the credential broker, the policy bundles and OpenSearch itself; the `dev` profile, which relaxes TLS by
+Out of scope: the gateway, the credential broker, the scope mapping an administrator sets and OpenSearch itself; the `dev` profile, which relaxes TLS by
 design and listens on loopback only; test fixtures under `src/test`.
 
 ## Supported versions

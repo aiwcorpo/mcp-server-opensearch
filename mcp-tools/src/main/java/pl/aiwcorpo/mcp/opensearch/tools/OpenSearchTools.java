@@ -1,8 +1,5 @@
 package pl.aiwcorpo.mcp.opensearch.tools;
 
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.UncheckedIOException;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
@@ -26,6 +23,7 @@ import pl.aiwcorpo.mcp.opensearch.core.domain.LogCount;
 import pl.aiwcorpo.mcp.opensearch.core.domain.LogHit;
 import pl.aiwcorpo.mcp.opensearch.core.domain.LogPage;
 import pl.aiwcorpo.mcp.opensearch.core.domain.OpenSearchFeatures;
+import pl.aiwcorpo.mcp.opensearch.core.domain.OpenSearchResourceModel;
 import pl.aiwcorpo.mcp.opensearch.core.domain.QueryCheck;
 import pl.aiwcorpo.mcp.opensearch.core.domain.SearchAfter;
 import pl.aiwcorpo.mcp.opensearch.core.domain.GroupBy;
@@ -49,7 +47,6 @@ import pl.aiwcorpo.mcp.platform.resource.ResourceContext;
 import pl.aiwcorpo.mcp.platform.resource.ResourcePolicy;
 import pl.aiwcorpo.mcp.platform.resource.ResourceRef;
 import pl.aiwcorpo.mcp.platform.text.TextHygiene;
-import tools.jackson.databind.json.JsonMapper;
 
 /**
  * The MCP tools of this server. Every argument is untrusted input from a model. Parameter names are the public
@@ -82,16 +79,13 @@ public class OpenSearchTools {
 
     /** Document ids that fit a URL path segment; the same text goes to the input schema. */
     private static final String DOCUMENT_ID_REGEX = "^[A-Za-z0-9_-][A-Za-z0-9_.:@+=-]{0,255}$";
+    /** The {@code idPattern} of {@code OpenSearch::Index}, the pattern the input schema publishes for an index name. */
+    private static final Pattern INDEX_NAME = Pattern.compile(OpenSearchResourceModel.INDEX_NAME_REGEX);
     /**
-     * {@code OpenSearchIndexName} read from the contract on the classpath, the same pattern the input schema
-     * publishes. Since contracts 2.1 (CC-074) it excludes a leading dot itself.
+     * One name without wildcard, comma, colon, date math or leading dot, which cannot be {@code _all} or a bare
+     * {@code *}. The input schema publishes the same pattern.
      */
-    private static final Pattern INDEX_NAME = contractPattern("OpenSearchIndexName");
-    /**
-     * {@code OpenSearchIndexPrefix}: one name without wildcard, comma, colon, date math or leading dot, which cannot
-     * be {@code _all} or a bare {@code *}. The input schema publishes the same pattern.
-     */
-    private static final Pattern INDEX_PREFIX = contractPattern("OpenSearchIndexPrefix");
+    private static final Pattern INDEX_PREFIX = Pattern.compile(OpenSearchResourceModel.INDEX_PREFIX_REGEX);
     /** OpenSearch ids are free text up to 512 bytes; this keeps ids that fit a URL path segment unescaped. */
     private static final Pattern DOCUMENT_ID = Pattern.compile(DOCUMENT_ID_REGEX);
     /** The levels of the log field, upper case; the term query on the level field ignores case, so any mapping works. */
@@ -144,7 +138,7 @@ public class OpenSearchTools {
     @ToolTitle("Search logs")
     public PagedResult<LogHitView> searchLogs(
             @ToolParam(description = "Index prefix p: covers the index named p and every index named p-..., no wildcard")
-            @ArgumentLimits(contractPattern = "OpenSearchIndexPrefix", minLength = 1, maxLength = 255) String index_prefix,
+            @ArgumentLimits(pattern = OpenSearchResourceModel.INDEX_PREFIX_REGEX, minLength = 1, maxLength = 255) String index_prefix,
             @ToolParam(description = "Words that must all occur in the log message; characters such as + - | * \" are plain text")
             @ArgumentLimits(minLength = 1, maxLength = MAX_QUERY) String text,
             @ToolParam(description = "Log level, upper case: TRACE, DEBUG, INFO, WARN, ERROR or FATAL", required = false)
@@ -221,7 +215,7 @@ public class OpenSearchTools {
     @ToolTitle("Aggregate logs")
     public AggregateLogsResult aggregateLogs(
             @ToolParam(description = "Index prefix p: covers the index named p and every index named p-..., no wildcard")
-            @ArgumentLimits(contractPattern = "OpenSearchIndexPrefix", minLength = 1, maxLength = 255) String index_prefix,
+            @ArgumentLimits(pattern = OpenSearchResourceModel.INDEX_PREFIX_REGEX, minLength = 1, maxLength = 255) String index_prefix,
             @ToolParam(description = "What to group by: level, service or host")
             @ArgumentLimits(minLength = 4, maxLength = 7, pattern = GROUP_BY_REGEX) String group_by,
             @ToolParam(description = "Words that must all occur in the log message", required = false)
@@ -264,7 +258,7 @@ public class OpenSearchTools {
     @ToolTitle("Get document")
     public DocumentResult getDocument(
             @ToolParam(description = "One concrete index name (no wildcard, no list)")
-            @ArgumentLimits(contractPattern = "OpenSearchIndexName", minLength = 1, maxLength = 255)
+            @ArgumentLimits(resourceType = OpenSearchResourceModel.INDEX_TYPE, minLength = 1, maxLength = 255)
             @ResourceRef(type = OpenSearchIndexResolver.TYPE) String index,
             @ToolParam(description = "Document id as returned by search_logs")
             @ArgumentLimits(minLength = 1, maxLength = 256, pattern = DOCUMENT_ID_REGEX) String id) {
@@ -284,7 +278,7 @@ public class OpenSearchTools {
     @ToolTitle("Count logs")
     public CountLogsResult countLogs(
             @ToolParam(description = "Index prefix p: covers the index named p and every index named p-..., no wildcard")
-            @ArgumentLimits(contractPattern = "OpenSearchIndexPrefix", minLength = 1, maxLength = 255) String index_prefix,
+            @ArgumentLimits(pattern = OpenSearchResourceModel.INDEX_PREFIX_REGEX, minLength = 1, maxLength = 255) String index_prefix,
             @ToolParam(description = "Words that must all occur in the log message", required = false)
             @ArgumentLimits(minLength = 1, maxLength = MAX_QUERY) String text,
             @ToolParam(description = "Log level, upper case: TRACE, DEBUG, INFO, WARN, ERROR or FATAL", required = false)
@@ -308,7 +302,7 @@ public class OpenSearchTools {
     @ToolTitle("List indices")
     public PagedResult<IndexView> listIndices(
             @ToolParam(description = "Index prefix p: covers the index named p and every index named p-..., no wildcard")
-            @ArgumentLimits(contractPattern = "OpenSearchIndexPrefix", minLength = 1, maxLength = 255) String index_prefix,
+            @ArgumentLimits(pattern = OpenSearchResourceModel.INDEX_PREFIX_REGEX, minLength = 1, maxLength = 255) String index_prefix,
             @ToolParam(description = "Number of indices, 1-50, default 25", required = false)
             @ArgumentLimits(minimum = 1, maximum = MAX_INDEX_PAGE) Integer size,
             @ToolParam(description = "nextCursor of the previous page of the same query", required = false)
@@ -334,7 +328,7 @@ public class OpenSearchTools {
     @ToolTitle("Get index mapping")
     public IndexMappingResult getIndexMapping(
             @ToolParam(description = "One concrete index name (no wildcard, no list)")
-            @ArgumentLimits(contractPattern = "OpenSearchIndexName", minLength = 1, maxLength = 255)
+            @ArgumentLimits(resourceType = OpenSearchResourceModel.INDEX_TYPE, minLength = 1, maxLength = 255)
             @ResourceRef(type = OpenSearchIndexResolver.TYPE) String index) {
         requireFeature(OpenSearchFeatures.MAPPING);
         validIndexName(index);
@@ -351,7 +345,7 @@ public class OpenSearchTools {
     @ToolTitle("Validate query")
     public QueryCheckResult validateQuery(
             @ToolParam(description = "Index prefix p: covers the index named p and every index named p-..., no wildcard")
-            @ArgumentLimits(contractPattern = "OpenSearchIndexPrefix", minLength = 1, maxLength = 255) String index_prefix,
+            @ArgumentLimits(pattern = OpenSearchResourceModel.INDEX_PREFIX_REGEX, minLength = 1, maxLength = 255) String index_prefix,
             @ToolParam(description = "Words that must all occur in the log message", required = false)
             @ArgumentLimits(minLength = 1, maxLength = MAX_QUERY) String text,
             @ToolParam(description = "Log level, upper case: TRACE, DEBUG, INFO, WARN, ERROR or FATAL", required = false)
@@ -439,23 +433,6 @@ public class OpenSearchTools {
                     + " not starting with '.'");
         }
         return value;
-    }
-
-    private static Pattern contractPattern(String definition) {
-        String resource = "/mcp-contracts/schemas/common.schema.json";
-        try (InputStream in = OpenSearchTools.class.getResourceAsStream(resource)) {
-            if (in == null) {
-                throw new IllegalStateException(resource + " is missing: mcp-contracts must be on the classpath");
-            }
-            String pattern = JsonMapper.builder().build().readTree(in).path("$defs").path(definition)
-                    .path("pattern").asString(null);
-            if (pattern == null) {
-                throw new IllegalStateException(definition + " has no pattern in common.schema.json");
-            }
-            return Pattern.compile(pattern);
-        } catch (IOException ex) {
-            throw new UncheckedIOException(ex);
-        }
     }
 
     private static String validText(String value) {

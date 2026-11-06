@@ -75,6 +75,21 @@ class ManifestTest extends ServerTestSupport {
     }
 
     @Test
+    void theManifestCarriesThePoliciesAndTheDeclarationsOfTheJarWithTheirHash() throws Exception {
+        JsonNode manifest = manifest();
+
+        assertThat(manifest.at("/policies/namespace").asString()).isEqualTo("OpenSearch");
+        assertThat(manifest.at("/policies/files").findValuesAsString("name")).containsExactly("read.cedar", "update.cedar");
+        assertThat(manifest.get("policiesHash").asString()).startsWith("sha256:");
+        assertThat(manifest.get("resourceTypes")).hasSize(1);
+        JsonNode index = manifest.at("/resourceTypes/0");
+        assertThat(index.get("type").asString()).isEqualTo("OpenSearch::Index");
+        assertThat(index.at("/classification/attribute").asString()).isEqualTo("tags");
+        assertThat(index.at("/classification/kind").asString()).isEqualTo("set");
+        assertThat(index.has("earlyScopeCheck") && index.get("earlyScopeCheck").asBoolean()).isFalse();
+    }
+
+    @Test
     void theDefinitionsAreExactlyWhatToolsListPublishesSoTheHashesAgree() throws Exception {
         JsonNode manifest = manifest();
         List<JsonNode> listed = listedTools();

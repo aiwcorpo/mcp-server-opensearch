@@ -14,15 +14,10 @@ aiwcorpo:
         allow-test-keys: true
       credential:
         connect-url: ${MCP_CONNECT_URL:http://localhost:18090/connections?system={system}}
-      # Bundles of the dev stack's policy repository (mcp-policies, served by the dev stack). Run from the repository
-      # root so the relative key path resolves. Test keys are allowed here and nowhere else; tests replace all of this
-      # with TestGateway.serverProperties().
-      policy:
-        allow-test-keys: true
-        main:
-          url: ${MCP_POLICY_URL:http://127.0.0.1:18747/policies/main/latest.json}
-          key-id: test-policies-main-dev
-          public-key-file: ${MCP_POLICY_PUBLIC_KEY_FILE:../mcp-policies/keys/dev/test-policies-main-dev.public.pem}
+      # LocalGateway and TestGateway serve the policy data next to the JWKS. Tests replace this with
+      # TestGateway.serverProperties().
+      policy-data:
+        url: ${MCP_GATEWAY_POLICY_DATA_URL:http://127.0.0.1:18445/internal/v1/policy-data}
       manifest:
         internal-url: https://mcp-opensearch.internal:8443/mcp
         accepted-credential-types: token-exchange

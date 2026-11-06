@@ -11,8 +11,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * The policy (C7) and the scope of the grants on both tools, with the example bundle of the contracts: the groups
- * {@code mcp-opensearch-idx-logs-team-a} and {@code -b} grant those prefixes, an index tagged {@code restricted} by the
+ * The policy (C7) and the scope of the grants on both tools, with the scope mapping of the test gateway: the groups
+ * {@code mcp-opensearch-idx-logs-team-a} and {@code -b} are mapped to those prefixes, an index tagged {@code restricted} by the
  * server configuration is forbidden, and every refusal looks like an index that does not exist.
  */
 class ResourcePolicyTest extends ServerTestSupport {
