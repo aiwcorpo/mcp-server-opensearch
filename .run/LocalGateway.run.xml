@@ -1,0 +1,8 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="LocalGateway" type="JarApplication">
+    <option name="JAR_PATH" value="$USER_HOME$/.m2/repository/pl/aiwcorpo/mcp/mcp-platform-test/4.0.0/mcp-platform-test-4.0.0-local-gateway.jar" />
+    <option name="PROGRAM_PARAMETERS" value="--server mcp-opensearch --jwks-port 18445 --policies-dir mcp-app/src/main/resources/mcp/policies --scope-mapping .run/scope-mapping.json --groups mcp-opensearch-read,mcp-opensearch-idx-logs-team-a --credential-type token-exchange --env-file local-gateway.env" />
+    <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$" />
+    <method v="2" />
+  </configuration>
+</component>

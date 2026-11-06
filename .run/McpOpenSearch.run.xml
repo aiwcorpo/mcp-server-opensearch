@@ -1,0 +1,14 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="McpOpenSearch (dev, behind LocalGateway)" type="Application" factoryName="Application">
+    <option name="MAIN_CLASS_NAME" value="pl.aiwcorpo.mcp.opensearch.app.McpServerApplication" />
+    <module name="mcp-app" />
+    <option name="VM_PARAMETERS" value="--enable-native-access=ALL-UNNAMED" />
+    <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$" />
+    <envs>
+      <env name="SPRING_PROFILES_ACTIVE" value="dev" />
+    </envs>
+    <method v="2">
+      <option name="Make" enabled="true" />
+    </method>
+  </configuration>
+</component>
