@@ -284,6 +284,24 @@ class ExtendedToolsTest extends ServerTestSupport {
     }
 
     @Test
+    void theClusterToolsNeedTheOpsGroupNextToTheReadGroup() {
+        for (String tool : List.of("get_cluster_health", "get_backend_info")) {
+            try (McpSyncClient readOnly = clientInGroups(PAT, READ_GROUP, GRANT_TEAM_A)) {
+                McpSchema.CallToolResult result = call(readOnly, tool, Map.of());
+
+                assertThat(result.isError()).as(tool).isTrue();
+                assertThat(text(result)).as(tool).contains("\"error\":\"access_denied\"");
+            }
+            try (McpSyncClient opsOnly = clientInGroups(PAT, OPS_GROUP)) {
+                assertThat(text(call(opsOnly, tool, Map.of()))).as(tool).contains("\"error\":\"access_denied\"");
+            }
+            try (McpSyncClient both = clientInGroups(PAT, READ_GROUP, OPS_GROUP)) {
+                assertThat(call(both, tool, Map.of()).isError()).as(tool).isFalse();
+            }
+        }
+    }
+
+    @Test
     void theClusterHealthIsGeneralAndHasNoNames() {
         for (String version : VERSIONS) {
             BACKEND.reset();

@@ -77,6 +77,12 @@ public class OpenSearchTools {
     public static final String GET_CLUSTER_HEALTH = "get_cluster_health";
     public static final String GET_BACKEND_INFO = "get_backend_info";
 
+    /**
+     * The two tools that name no index describe the whole cluster (shard counts, exact version), so no index scope
+     * applies to them: the read group is not enough, the caller also needs this one.
+     */
+    public static final String OPS_GROUP = "mcp-opensearch-ops";
+
     /** Document ids that fit a URL path segment; the same text goes to the input schema. */
     private static final String DOCUMENT_ID_REGEX = "^[A-Za-z0-9_-][A-Za-z0-9_.:@+=-]{0,255}$";
     /** The {@code idPattern} of {@code OpenSearch::Index}, the pattern the input schema publishes for an index name. */
@@ -364,7 +370,7 @@ public class OpenSearchTools {
 
     @Tool(name = GET_CLUSTER_HEALTH, description = "Returns the health of the whole cluster: status, number of nodes"
             + " and shard counts. No names of the cluster, nodes or indices.")
-    @ToolRisk(RiskLevel.READ_ONLY)
+    @ToolRisk(value = RiskLevel.READ_ONLY, additionalGroup = OPS_GROUP)
     @ToolTitle("Get cluster health")
     public ClusterHealthResult getClusterHealth() {
         requireFeature(OpenSearchFeatures.CLUSTER_HEALTH);
@@ -377,7 +383,7 @@ public class OpenSearchTools {
     @Tool(name = GET_BACKEND_INFO, description = "Returns what this server knows about the OpenSearch behind it: the"
             + " version found at startup, whether it is a tested one (supported) or not (degraded, unavailable), and the"
             + " features available. Makes no request to OpenSearch.")
-    @ToolRisk(RiskLevel.READ_ONLY)
+    @ToolRisk(value = RiskLevel.READ_ONLY, additionalGroup = OPS_GROUP)
     @ToolTitle("Get OpenSearch version and features")
     public BackendInfoResult getBackendInfo() {
         Capabilities found = capabilities.of(OpenSearchFeatures.PROBE);

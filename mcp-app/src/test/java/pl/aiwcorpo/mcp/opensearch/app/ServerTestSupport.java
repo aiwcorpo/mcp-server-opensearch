@@ -38,6 +38,7 @@ abstract class ServerTestSupport {
     static final String SERVER_ID = "mcp-opensearch";
     static final String SYSTEM = "opensearch";
     static final String READ_GROUP = "mcp-opensearch-read";
+    static final String OPS_GROUP = "mcp-opensearch-ops";
     /** Groups the scope mapping of {@link #GATEWAY} maps to the index prefixes logs-team-a and logs-team-b. */
     static final String GRANT_TEAM_A = "mcp-opensearch-idx-logs-team-a";
     static final String GRANT_TEAM_B = "mcp-opensearch-idx-logs-team-b";
@@ -110,7 +111,7 @@ abstract class ServerTestSupport {
 
     /** The caller of most tests: allowed to use the read tools, granted both prefixes the server is configured for. */
     static void reader(TestGateway.Token user) {
-        user.username("jkowalski").groups(List.of(READ_GROUP, GRANT_TEAM_A, GRANT_TEAM_B));
+        user.username("jkowalski").groups(List.of(READ_GROUP, OPS_GROUP, GRANT_TEAM_A, GRANT_TEAM_B));
     }
 
     /** A caller in exactly these groups. */

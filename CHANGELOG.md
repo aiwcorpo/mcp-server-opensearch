@@ -10,8 +10,8 @@ Major release: the policies of the server live in this repository. Built on `mcp
   `update.cedar`), carried in the manifest with `policiesHash`. They replace `policies/opensearch/` of the `mcp-policies` repository;
   the resource rules are the same, except what the platform now generates for every server: the forbid for indices tagged
   `restricted` and the rule for the service account.
-- The call rules by group are now the platform's. `get_cluster_health` and `get_backend_info` no longer need `mcp-opensearch-ops`:
-  `mcp-opensearch-read` opens them like every other read tool.
+- The call rules by group are now the platform's. `get_cluster_health` and `get_backend_info` keep the ops group as an
+  `additionalGroup` of the tool (manifest and `definitionHash`): a caller needs `mcp-opensearch-read` and `mcp-opensearch-ops`.
 - A deployed server whose policies or declarations changed waits for approval in the gateway: it refuses calls (`policies_not_approved`,
   `policies_differ`) until an administrator approves the new `policiesHash`. Register the new manifest and approve before the first call.
 - The index resolver gives an index the scope of every dash prefix of its name that can be granted (the entity builder did this

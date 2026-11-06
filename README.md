@@ -55,8 +55,8 @@ Nine tools, all `READ_ONLY` with action `read`. The client sees them as `opensea
 Risk, action and the group a call requires for every tool are in the generated
 [tool reference](https://github.com/aiwcorpo/mcp-docs/blob/main/docs/reference/tools.md)
 (`docs/reference/tools.md` in `mcp-docs`). The tools that read logs and indices need the group `mcp-opensearch-read`;
-`get_cluster_health` and `get_backend_info` need it too: the platform picks the group by the risk of a tool, so there is no
-separate group for the two tools that name no index. Tools that work on indices also need at least one group that the
+`get_cluster_health` and `get_backend_info` describe the whole cluster and need `mcp-opensearch-ops` as well
+(`@ToolRisk(additionalGroup = ...)`, in the manifest as `additionalGroup`). Tools that work on indices also need at least one group that the
 administrator mapped to an index prefix in the scope mapping (for example `mcp-opensearch-idx-logs-team-a` to
 `OpenSearch::Index/logs-team-a`).
 

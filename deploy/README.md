@@ -100,7 +100,8 @@ every instance sees a change within a few seconds. Adding, changing and removing
    puts the server in `pending_approval` for that part until it is approved again; the server refuses calls with `policies_differ`
    in the meantime.
 6. **Groups.** The server needs the group `mcp-opensearch-read` in the identity provider (the gateway derives it from the risk of
-   a tool; `mcp-opensearch-write` and `-destructive` only matter when a tool that changes data is added). Reading is limited to the
+   a tool; `mcp-opensearch-write` and `-destructive` only matter when a tool that changes data is added) and `mcp-opensearch-ops`,
+   which `get_cluster_health` and `get_backend_info` require in addition to the read group. Reading is limited to the
    index prefixes that a group is mapped to; map them in Administration, Scope mapping, or with `PUT /admin/v1/policy/scope-mapping`
    (the whole document, `If-Match` with the `ETag` of the last `GET`):
 
@@ -138,5 +139,5 @@ MCP_REGISTRY=artifactory.corp.test/mcp
 Version 2.0.0 does not read `MCP_POLICY_URL`, `MCP_POLICY_KEY_ID`, `MCP_POLICY_PUBLIC_KEY_FILE` and `MCP_POLICY_STATE_DIR`, and refuses to
 start when they are set through `aiwcorpo.mcp.platform.policy.*`. Remove them, set `MCP_GATEWAY_POLICY_DATA_URL`, and renew the
 certificate if it has no `clientAuth` usage. Register the new manifest and approve the policies as above before the first call.
-`get_cluster_health` and `get_backend_info` no longer need `mcp-opensearch-ops`: the platform decides by the risk of a tool, so
-`mcp-opensearch-read` opens them too.
+`get_cluster_health` and `get_backend_info` still need `mcp-opensearch-ops`, now in addition to `mcp-opensearch-read` (the
+group is the `additionalGroup` of the tool and part of its `definitionHash`, so the gateway asks for approval again).

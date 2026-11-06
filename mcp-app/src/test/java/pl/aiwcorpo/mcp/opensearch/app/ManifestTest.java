@@ -114,6 +114,18 @@ class ManifestTest extends ServerTestSupport {
     }
 
     @Test
+    void onlyTheTwoClusterToolsCarryTheOpsGroupAsAdditionalGroup() throws Exception {
+        for (JsonNode tool : manifest().get("tools")) {
+            String name = tool.get("name").asString();
+            if (List.of("get_cluster_health", "get_backend_info").contains(name)) {
+                assertThat(tool.get("additionalGroup").asString()).as(name).isEqualTo("mcp-opensearch-ops");
+            } else {
+                assertThat(tool.has("additionalGroup")).as(name).isFalse();
+            }
+        }
+    }
+
+    @Test
     void onlyTheIndexOfTheToolsThatReadOneIndexIsAResourceRef() throws Exception {
         for (JsonNode tool : manifest().get("tools")) {
             if (List.of("get_document", "get_index_mapping").contains(tool.get("name").asString())) {
