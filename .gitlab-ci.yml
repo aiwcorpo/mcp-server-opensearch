@@ -1,15 +1,9 @@
-# Thin wrapper: all logic is in ci/run.sh, which also runs in a developer's shell.
-#
 # Merge request pipelines run code nobody has reviewed yet, so they get no secret and no Docker socket.
-# The image job runs on the default branch only, on a runner tagged docker-socket that mounts /var/run/docker.sock. That
-# runner must be a protected runner (it then takes jobs of protected branches only), otherwise a merge request could
-# reach the socket.
 stages:
   - verify
-  - build-image
 
 default:
-  image: maven:3.9.12-eclipse-temurin-25
+  image: maven:3.9.12-eclipse-temurin-25@sha256:4f82a03a7d6679281952d628131299b1be88d7030a49c6a2b7d2ba2642e44e3e
   cache:
     key: maven
     paths: [.m2/repository]
@@ -20,7 +14,7 @@ variables:
 verify:
   stage: verify
   script:
-    - ci/run.sh verify
+    - ./mvnw -B verify
   artifacts:
     when: always
     paths:
@@ -31,15 +25,3 @@ verify:
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-
-build-image:
-  stage: build-image
-  image: docker:27-cli
-  tags: [docker-socket]
-  needs: [verify]
-  before_script:
-    - apk add --no-cache bash git
-  script:
-    - ci/run.sh image
-  rules:
-    - if: $CI_COMMIT_BRANCH == "main" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH

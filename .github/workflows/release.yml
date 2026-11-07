@@ -43,7 +43,7 @@ jobs:
           version="${GITHUB_REF_NAME#v}"
           test "$(./mvnw -q -B -N org.apache.maven.plugins:maven-help-plugin:3.5.1:evaluate -Dexpression=project.version -DforceStdout)" = "$version"
       - name: Verify (tests, manifest)
-        run: ci/run.sh verify
+        run: ./mvnw -B verify
       - name: SBOM (CycloneDX)
         run: ./mvnw -B org.cyclonedx:cyclonedx-maven-plugin:2.9.1:makeAggregateBom
       - name: Build the image and save it

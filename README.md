@@ -106,14 +106,13 @@ after a change to the policies (it approves the hash of the files it read). The 
 ```bash
 export JAVA_HOME="$(/usr/libexec/java_home -v 25)"   # macOS; on Linux the JDK 25 directory
 ./mvnw verify        # jar: mcp-app/target/mcp-opensearch.jar and mcp-app/target/mcp-manifest.json
-make ci              # ci/run.sh verify: text checks, clean verify, required test counts, manifest present
 ```
 
 Tests need no Docker and no platform environment. `TestGateway` from `mcp-platform-test` signs internal JWTs, and `StubBackend`
 imitates the OpenSearch REST API, including aliases, data streams, hidden indices and broken responses. It is not a real cluster.
 
 Platform artifacts (`mcp-platform-bom`, contracts) come from Maven Central or from `~/.m2`;
-the setup is described in the README of `mcp-starter-lib`. Linux and macOS with bash 3.2 or newer; Windows only through WSL2.
+the setup is described in the README of `mcp-starter-lib`. Linux and macOS with bash 3.2 or newer; Windows only through WSL2. The GitHub, GitLab and Jenkins files run `./mvnw -B verify`.
 
 The build writes `mcp-app/target/mcp-manifest.json`. That file, not the answer of a running server, is what CI registers with
 the gateway. Any change to a tool changes its `definitionHash` and needs a new approval in the gateway.
@@ -153,8 +152,7 @@ the first run. `do_not_fail_on_forbidden: true` in the role makes a list that in
 
 ## Install
 
-The server is one jar or one image. For a VM with systemd use `deploy/scripts/install.sh mcp-app/target/mcp-opensearch.jar` and the
-environment template `deploy/systemd/mcp-opensearch.env.template`; the [VM installation guide](https://github.com/aiwcorpo/mcp-docs/blob/main/docs/operator/install-vm.md) in `mcp-docs` has the steps. For a
+The server is one jar or one image. For a VM with systemd the jar `mcp-app/target/mcp-opensearch.jar` and the environment template `deploy/systemd/mcp-opensearch.env.template` are installed as in `deploy/README.md`; the [VM installation guide](https://github.com/aiwcorpo/mcp-docs/blob/main/docs/operator/install-vm.md) in `mcp-docs` has the steps. For a
 container run `docker build -t mcp-opensearch:<tag> .` after `./mvnw verify` (image `eclipse-temurin:25-jre`, user `mcp`,
 port 8443). Operating notes, upgrades and troubleshooting are in `mcp-docs`.
 

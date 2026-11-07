@@ -10,7 +10,7 @@ JDK 25. Tests need no container runtime. Linux and macOS with bash 3.2 or newer;
 come from Maven Central or must be in `~/.m2` (see the README of `mcp-starter-lib`).
 
 ```bash
-ci/run.sh verify     # text checks, then clean verify; the same script runs in CI
+./mvnw -B verify     # the same command runs in CI
 ```
 
 A new tool follows the [tool guide](https://github.com/aiwcorpo/mcp-docs/blob/main/docs/developer/tools.md) in `mcp-docs`: closed argument schema, a resource argument or a `@ResourceRef` on every result
