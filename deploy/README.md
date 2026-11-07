@@ -1,7 +1,7 @@
 # Install mcp-opensearch
 
 The OpenSearch server as one container (Docker Compose) or one systemd service. It runs behind the MCP gateway; the gateway,
-the credential broker, the identity provider and Redis are installed elsewhere. Step by step for a VM: the
+the credential broker and the identity provider are installed elsewhere. Step by step for a VM: the
 [VM installation guide](https://github.com/aiwcorpo/mcp-docs/blob/main/docs/operator/install-vm.md) in `mcp-docs`. The image is
 built from the `Dockerfile` in the repository root.
 
@@ -27,7 +27,7 @@ deploy/
 
   Also the CA certificate.
 - The addresses of the gateway (internal TLS port), of the OpenSearch REST API (`https`) and of the portal page for connecting an account, and the index prefixes this server may touch (`MCP_OPENSEARCH_INDEX_PREFIXES`).
-- Redis with an ACL user `mcp-opensearch` that may run `SET` on `jti:mcp-opensearch:*`.
+- Redis: `compose.yaml` starts one next to the server (service `redis`, reachable from the server only, default user off, one ACL account that may run `SET` on its own `jti:` keys). `MCP_REDIS_PASSWORD` in the env file is its password: choose one (`openssl rand -hex 24`). For one Redis shared by several instances, remove the service and set `MCP_REDIS_HOST` in the compose file.
 
 ## Install
 
