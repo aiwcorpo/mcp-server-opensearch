@@ -1,7 +1,7 @@
 # systemd unit: /etc/systemd/system/mcp-opensearch.service
 #   systemctl daemon-reload && systemctl enable --now mcp-opensearch
 [Unit]
-Description=MCP server mcp-opensearch (behind the MCP gateway, mTLS)
+Description=MCP server mcp-opensearch (behind the MCP gateway)
 After=network-online.target
 Wants=network-online.target
 
@@ -9,7 +9,9 @@ Wants=network-online.target
 Type=simple
 User=mcp
 Group=mcp
-# Secrets and addresses (mcp-opensearch.env.template); logs go to journald.
+# Secrets and addresses (mcp-opensearch.env.template); logs go to journald (the fingerprint of the certificate is in the first lines).
+# /var/lib/mcp-opensearch holds the generated certificate and the cursor key between starts.
+StateDirectory=mcp-opensearch
 EnvironmentFile=/etc/mcp-opensearch/mcp-opensearch.env
 ExecStart=/usr/bin/java -XX:MaxRAMPercentage=75 -XX:+ExitOnOutOfMemoryError -jar /opt/mcp-opensearch/mcp-opensearch.jar
 
