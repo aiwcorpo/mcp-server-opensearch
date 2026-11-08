@@ -9,7 +9,12 @@ RUN groupadd --system mcp && useradd --system --gid mcp --no-create-home --home-
 WORKDIR /app
 COPY --chown=root:root mcp-app/target/mcp-opensearch.jar /app/app.jar
 
+# The self-signed certificate and the cursor key are generated here at the first start and must survive it: mount a volume.
+RUN mkdir -p /var/lib/mcp/state && chown mcp:mcp /var/lib/mcp/state
+VOLUME /var/lib/mcp/state
+
 USER mcp
-# mTLS from the gateway only (C3); certificates and secrets come from the environment and mounted files.
+# TLS without a client certificate (CC-249): the gateway proves itself with the internal JWT. An own certificate and the secrets
+# come from the environment and mounted files.
 EXPOSE 8443
 ENTRYPOINT ["java", "-XX:MaxRAMPercentage=75", "-XX:+ExitOnOutOfMemoryError", "-jar", "/app/app.jar"]

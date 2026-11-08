@@ -22,31 +22,28 @@ import pl.aiwcorpo.mcp.opensearch.integration.OpenSearchSearchProperties;
 class ProductionConfigurationTest {
 
     @Test
-    void outsideDevTheServerDemandsAClientCertificate() throws IOException {
+    void theServerAsksForNoClientCertificateAndLeavesTlsToTheStarter() throws IOException {
         List<PropertySource<?>> documents = new YamlPropertySourceLoader()
                 .load("application.yml", new ClassPathResource("application.yml"));
 
-        PropertySource<?> production = documents.stream()
-                .filter(document -> "!dev".equals(document.getProperty("spring.config.activate.on-profile")))
-                .findFirst().orElseThrow();
-        assertThat(String.valueOf(production.getProperty("server.ssl.client-auth"))).isEqualTo("need");
-        assertThat(String.valueOf(production.getProperty("server.ssl.bundle"))).isEqualTo("mcp-server");
+        // The gateway proves itself with the internal JWT, not with a certificate; the certificate of the server comes from
+        // MCP_TLS_*, or the starter generates one (CC-249), so the file sets neither the client auth nor a bundle.
         assertThat(documents).allSatisfy(document -> {
-            Object clientAuth = document.getProperty("server.ssl.client-auth");
-            assertThat(clientAuth == null || "need".equals(String.valueOf(clientAuth))).isTrue();
+            assertThat(document.containsProperty("server.ssl.client-auth")).isFalse();
+            assertThat(document.containsProperty("server.ssl.bundle")).isFalse();
+            assertThat(document.containsProperty("spring.ssl.bundle.jks.mcp-server.keystore.location")).isFalse();
         });
     }
 
     @Test
-    void theBaseConfigurationNeedsThePolicyDataAndTheManifestButNeverAllowsTestKeys() throws IOException {
+    void theBaseConfigurationNeedsTheManifestButNeverAllowsTestKeys() throws IOException {
         List<PropertySource<?>> documents = new YamlPropertySourceLoader()
                 .load("application.yml", new ClassPathResource("application.yml"));
         PropertySource<?> base = documents.getFirst();
 
-        assertThat(String.valueOf(base.getProperty("aiwcorpo.mcp.platform.policy-data.url"))).isEqualTo("${MCP_GATEWAY_POLICY_DATA_URL:}");
-        assertThat(String.valueOf(base.getProperty("aiwcorpo.mcp.platform.policy-data.tls-name"))).isEqualTo("${MCP_GATEWAY_TLS_NAME:}");
+        assertThat(base.containsProperty("aiwcorpo.mcp.platform.policy-data.url")).as("pushed by the gateway").isFalse();
         assertThat(base.containsProperty("aiwcorpo.mcp.platform.manifest.version")).isTrue();
-        assertThat(base.containsProperty("aiwcorpo.mcp.platform.manifest.internal-url")).isTrue();
+        assertThat(base.containsProperty("aiwcorpo.mcp.platform.manifest.internal-url")).as("informational and optional").isFalse();
         assertThat(base.containsProperty("aiwcorpo.mcp.platform.manifest.accepted-credential-types")).isTrue();
         assertThat(documents).allSatisfy(document -> {
             assertThat(document.containsProperty("aiwcorpo.mcp.platform.internal-jwt.allow-test-keys")).isFalse();
@@ -56,12 +53,13 @@ class ProductionConfigurationTest {
     }
 
     @Test
-    void testKeysAndThePolicyDataOfTheLocalGatewayAreConfiguredInDevOnly() throws IOException {
+    void testKeysAndTheLocalJwksAreConfiguredInDevOnly() throws IOException {
         Map<String, Object> dev = (Map<String, Object>) new YamlPropertySourceLoader()
                 .load("application-dev.yml", new ClassPathResource("application-dev.yml")).getFirst().getSource();
 
         assertThat(String.valueOf(dev.get("aiwcorpo.mcp.platform.internal-jwt.allow-test-keys"))).isEqualTo("true");
-        assertThat(String.valueOf(dev.get("aiwcorpo.mcp.platform.policy-data.url"))).contains("http://127.0.0.1:");
+        assertThat(String.valueOf(dev.get("aiwcorpo.mcp.platform.internal-jwt.jwks-uri"))).contains("http://127.0.0.1:")
+                .contains("/.well-known/mcp-jwks.json");
     }
 
     @Test

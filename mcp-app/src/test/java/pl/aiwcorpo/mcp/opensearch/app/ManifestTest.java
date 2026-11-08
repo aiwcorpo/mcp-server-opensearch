@@ -12,11 +12,12 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 import pl.aiwcorpo.mcp.manifest.DefinitionHash;
 import pl.aiwcorpo.mcp.manifest.ManifestRules;
+import pl.aiwcorpo.mcp.platform.test.TestGateway;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
- * The C6 manifest at {@code GET /mcp-manifest}: it passes the schema and rules the gateway applies at registration, and
+ * The C6 manifest at {@code GET /.well-known/mcp-manifest} (C14, a service token of the purpose {@code manifest}): it passes the schema and rules the gateway applies at registration, and
  * its tool definitions are exactly what {@code tools/list} publishes, so the {@code definitionHash} the gateway pins is
  * the one of the tools clients see.
  */
@@ -44,7 +45,7 @@ class ManifestTest extends ServerTestSupport {
     }
 
     private JsonNode manifest() throws Exception {
-        HttpResponse<String> response = get("/mcp-manifest", GATEWAY.service().mint().headers());
+        HttpResponse<String> response = get("/.well-known/mcp-manifest", GATEWAY.manifestToken().mint().headers());
         assertThat(response.statusCode()).isEqualTo(200);
         return JSON.readTree(response.body());
     }
@@ -176,8 +177,13 @@ class ManifestTest extends ServerTestSupport {
     }
 
     @Test
-    void theManifestNeedsTheInternalJwtAndIsNotATool() throws Exception {
-        assertThat(get("/mcp-manifest", Map.of()).statusCode()).isEqualTo(401);
-        assertThat(get("/mcp-manifest", GATEWAY.user().tool("get_document").mint().headers()).statusCode()).isEqualTo(401);
+    void theManifestNeedsTheInternalJwtOfThePurposeManifest() throws Exception {
+        String path = "/.well-known/mcp-manifest";
+        assertThat(get(path, Map.of()).statusCode()).isEqualTo(401);
+        assertThat(get(path, GATEWAY.user().tool("get_document").mint().headers()).statusCode())
+                .as("the manifest is not a tool call").isEqualTo(401);
+        assertThat(get(path, GATEWAY.service().mint().headers()).statusCode()).as("a token minted for calls").isEqualTo(401);
+        assertThat(get(path, GATEWAY.service().use(TestGateway.USE_POLICY_DATA).mint().headers()).statusCode())
+                .as("a token minted for the policy data").isEqualTo(401);
     }
 }

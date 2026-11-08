@@ -78,6 +78,20 @@ class GatewayOnlyAccessTest extends ServerTestSupport {
     }
 
     @Test
+    void aTokenOfAnotherPurposeCannotPushPolicyDataNorCallAndAnUnheardOfRevisionIsStale() throws Exception {
+        String push = "/.well-known/mcp-policy-data";
+        assertThat(postTo(push, "{}", GATEWAY.service().mint().headers()).statusCode()).as("a call token pushing").isEqualTo(401);
+        assertThat(postTo(push, "{}", GATEWAY.manifestToken().mint().headers()).statusCode()).as("a manifest token pushing").isEqualTo(401);
+        assertThat(post(GET_RECORD, GATEWAY.service().use(TestGateway.USE_POLICY_DATA).mint().headers()).statusCode())
+                .as("a policy-data token calling").isEqualTo(401);
+
+        HttpResponse<String> stale = post(GET_RECORD, GATEWAY.user().tool("get_document").policyRevision(Integer.MAX_VALUE).mint().headers());
+        assertThat(stale.statusCode()).as("the server has not heard of that revision yet").isEqualTo(409);
+        assertThat(stale.body()).contains("\"error\":\"policy_data_stale\"").contains("\"requiredRevision\":" + Integer.MAX_VALUE);
+        assertThat(BACKEND.authorizations()).isEmpty();
+    }
+
+    @Test
     void onlyTheHealthEndpointAnswersWithoutJwt() throws Exception {
         assertThat(get("/actuator/health").statusCode()).isEqualTo(200);
         assertThat(get("/actuator/prometheus").statusCode()).isEqualTo(401);
@@ -93,6 +107,15 @@ class GatewayOnlyAccessTest extends ServerTestSupport {
                 .timeout(Duration.ofSeconds(15))
                 .header("Content-Type", "application/json")
                 .header("Accept", "application/json, text/event-stream")
+                .POST(HttpRequest.BodyPublishers.ofString(body));
+        headers.forEach(request::header);
+        return http.send(request.build(), HttpResponse.BodyHandlers.ofString());
+    }
+
+    private HttpResponse<String> postTo(String path, String body, Map<String, String> headers) throws Exception {
+        HttpRequest.Builder request = HttpRequest.newBuilder(URI.create(baseUrl() + path))
+                .timeout(Duration.ofSeconds(15))
+                .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(body));
         headers.forEach(request::header);
         return http.send(request.build(), HttpResponse.BodyHandlers.ofString());

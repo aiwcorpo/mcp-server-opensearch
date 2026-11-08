@@ -1,5 +1,7 @@
-# Base configuration is the production one: mTLS from the gateway, internal JWT, jti store in Redis.
-# Everything that differs per environment comes from environment variables (README, "Konfiguracja").
+# Base configuration is the production one: TLS on the server port (the author's own certificate, or one the starter
+# generates into MCP_STATE_DIR), the gateway's internal JWT on every path but the health check, the one-time jti in memory.
+# Everything that differs per environment comes from environment variables (README, "Configuration"); the starter reads
+# MCP_TLS_*, MCP_PLAIN_HTTP, MCP_STATE_DIR, MCP_REDIS_* and MCP_PAGING_CURSOR_KEY itself.
 # The 'dev' profile (tests, see application-dev.yml) only turns off TLS; the remaining development
 # relaxations come from TestGateway and the starter refuses them outside 'dev'.
 server:
@@ -9,12 +11,6 @@ server:
 spring:
   application:
     name: mcp-opensearch
-  data:
-    redis:
-      host: ${MCP_REDIS_HOST:localhost}
-      port: ${MCP_REDIS_PORT:6379}
-      username: ${MCP_REDIS_USER:mcp-opensearch}
-      password: ${MCP_REDIS_PASSWORD:}
   ai:
     mcp:
       server:
@@ -28,22 +24,14 @@ aiwcorpo:
       server-id: mcp-opensearch
       internal-jwt:
         issuer: ${MCP_GATEWAY_ISSUER:https://mcp-gateway.internal}
+        # The public key set of the gateway: https://<domain>/.well-known/mcp-jwks.json
         jwks-uri: ${MCP_GATEWAY_JWKS_URI:}
       credential:
         connect-url: ${MCP_CONNECT_URL:}
-      # Key of the cursors of search_logs and list_indices (Base64, at least 32 bytes). Every instance must have the
-      # same one; without it each instance draws its own and a cursor from one is refused by the other.
-      paging:
-        cursor-key: ${MCP_CURSOR_KEY:}
-      # Scope mapping, allowed AI clients and emergency overrides of the administrator, served by the gateway over mTLS with
-      # this server's own certificate (CN mcp-opensearch). The policies themselves are in this jar (mcp/policies/).
-      policy-data:
-        url: ${MCP_GATEWAY_POLICY_DATA_URL:}
-        tls-name: ${MCP_GATEWAY_TLS_NAME:}
-      # Description of this server for the registry (GET /mcp-manifest, C6); the tool entries come from the code.
+      # The scope mapping, allowed AI clients and emergency overrides are pushed by the gateway; nothing to configure for them.
+      # Description of this server (GET /.well-known/mcp-manifest, C6, pulled by the gateway); the tool entries come from the code.
       manifest:
         version: '@project.version@'
-        internal-url: ${MCP_INTERNAL_URL:}
         # The first type is the default of the system (context.credentialType in Cedar): the broker exchanges the user's
         # token for one OpenSearch accepts (Bearer). A request whose X-MCP-Credential-Type is outside the list is refused.
         # Fixed on purpose: CredentialTypeGuard refuses to start with any other value (e.g. one set from the environment).
@@ -101,37 +89,3 @@ management:
   metrics:
     tags:
       application: mcp-opensearch
-
----
-# TLS outside 'dev'. The server ends mTLS itself: the gateway must present a certificate of the internal CA
-# (the starter also checks its CN), and the gateway checks this server's SAN mcp-opensearch.internal.
-spring:
-  config:
-    activate:
-      on-profile: "!dev"
-  ssl:
-    bundle:
-      jks:
-        mcp-server:
-          keystore:
-            location: file:${MCP_TLS_KEYSTORE}
-            password: ${MCP_TLS_STORE_PASSWORD}
-            type: PKCS12
-          truststore:
-            location: file:${MCP_TLS_TRUSTSTORE}
-            password: ${MCP_TLS_STORE_PASSWORD}
-            type: PKCS12
-        mcp-internal-ca:
-          truststore:
-            location: file:${MCP_TLS_TRUSTSTORE}
-            password: ${MCP_TLS_STORE_PASSWORD}
-            type: PKCS12
-server:
-  ssl:
-    bundle: mcp-server
-    client-auth: need
-aiwcorpo:
-  mcp:
-    platform:
-      internal-jwt:
-        jwks-ssl-bundle: mcp-internal-ca
