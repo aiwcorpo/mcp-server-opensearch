@@ -57,6 +57,27 @@ gateway handles by pushing and repeating the call. The gateway pushes after ever
 administrator has approved the policies it refuses every call (`upstream_unavailable`, reason `policies_not_approved` in the audit), which is the state
 the next section ends.
 
+## The platform certificate comes from a company CA
+
+`MCP_GATEWAY_JWKS_URI` is an `https` address. When the certificate of the platform is signed by a CA that the JVM does not know (a company
+CA), the server cannot read the key set and does not start. Put that CA in a truststore, keep it in `certs/` (the directory is mounted
+read-only at `/certs`) and point the JVM at it with `JAVA_TOOL_OPTIONS` in `mcp-opensearch.env`:
+
+```bash
+keytool -importcert -noprompt -alias company-ca -file company-ca.pem \
+  -keystore certs/truststore.p12 -storetype PKCS12 -storepass changeit
+```
+
+```
+JAVA_TOOL_OPTIONS=-Djavax.net.ssl.trustStore=/certs/truststore.p12 -Djavax.net.ssl.trustStoreType=PKCS12 -Djavax.net.ssl.trustStorePassword=changeit
+```
+
+The password only guards the integrity of the file and is not a secret, but the JVM prints `JAVA_TOOL_OPTIONS` to its log at start. The JVM
+reads no certificate from a store without the password. `javax.net.ssl.trustStore` replaces the default truststore of the JVM, so the CAs of
+public sites stop being trusted: import every CA the server needs (for example the one of the backend system), or copy
+`$JAVA_HOME/lib/security/cacerts`, add the company CA to the copy and point the option at the copy. On a virtual machine the same line goes
+into the environment file of the unit, with the path of the file on the host.
+
 ## Add the server to the platform
 
 Systems and servers are data of the broker and the gateway, not settings of this directory. Nothing restarts, in either direction:
@@ -83,8 +104,8 @@ every instance sees a change within a few seconds. Adding, changing and removing
     - any other certificate, a self-signed one included, is pinned (`pinned`) by its fingerprint: when the server later presents another
       certificate it becomes unreachable, and the portal shows the new fingerprint for approval.
 4. **Approve** the policies (`GET /admin/v1/registry/servers/mcp-opensearch/policies/pending` shows them, `POST .../policies/approve` takes
-   their `policiesHash`) in the portal under Administration, Servers. A later release that changes a policy, a declaration or a tool
-   puts the server in `pending_approval` for that part until it is approved again; the server refuses calls with `policies_differ`
+   their `policiesHash`) in the portal under Administration, Servers. A later release that changes a policy or a declaration
+   sends the policies of the server back to approval (`policiesStatus` is `pending_approval`; the connection stays `connected`) until they are approved again, and a changed tool waits on its own; the server refuses calls with `policies_differ`
    in the meantime.
 5. **Groups.** The server needs the group `mcp-opensearch-read` in the identity provider (the gateway derives it from the risk of
    a tool; `mcp-opensearch-write` and `-destructive` only matter when a tool that changes data is added) and `mcp-opensearch-ops`,
