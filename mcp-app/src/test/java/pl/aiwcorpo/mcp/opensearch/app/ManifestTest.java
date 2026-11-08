@@ -12,7 +12,6 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 import pl.aiwcorpo.mcp.manifest.DefinitionHash;
 import pl.aiwcorpo.mcp.manifest.ManifestRules;
-import pl.aiwcorpo.mcp.platform.test.TestGateway;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -45,7 +44,7 @@ class ManifestTest extends ServerTestSupport {
     }
 
     private JsonNode manifest() throws Exception {
-        HttpResponse<String> response = get("/.well-known/mcp-manifest", GATEWAY.manifestToken().mint().headers());
+        HttpResponse<String> response = get("/.well-known/mcp-manifest", java.util.Map.of());
         assertThat(response.statusCode()).isEqualTo(200);
         return JSON.readTree(response.body());
     }
@@ -177,13 +176,10 @@ class ManifestTest extends ServerTestSupport {
     }
 
     @Test
-    void theManifestNeedsTheInternalJwtOfThePurposeManifest() throws Exception {
+    void theManifestIsServedWithoutAuthentication() throws Exception {
         String path = "/.well-known/mcp-manifest";
-        assertThat(get(path, Map.of()).statusCode()).isEqualTo(401);
-        assertThat(get(path, GATEWAY.user().tool("get_document").mint().headers()).statusCode())
-                .as("the manifest is not a tool call").isEqualTo(401);
-        assertThat(get(path, GATEWAY.service().mint().headers()).statusCode()).as("a token minted for calls").isEqualTo(401);
-        assertThat(get(path, GATEWAY.service().use(TestGateway.USE_POLICY_DATA).mint().headers()).statusCode())
-                .as("a token minted for the policy data").isEqualTo(401);
+        assertThat(get(path, Map.of()).statusCode()).isEqualTo(200);
+        assertThat(get(path, Map.of("Authorization", "Bearer not-a-jwt")).statusCode()).as("a header that arrives is ignored").isEqualTo(200);
+        assertThat(get("/mcp-manifest", Map.of()).statusCode()).as("every other path still needs a token").isEqualTo(401);
     }
 }
