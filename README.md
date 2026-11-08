@@ -6,7 +6,7 @@ reads: no tool changes data or cluster settings, and no tool accepts a query, an
 server builds every request itself from values the model supplies (text, level, service, time range, index prefix).
 
 It is built on `mcp-platform-starter` 4.0.0 (Java 25, Spring Boot 4.1.0, Spring AI 2.0.0, `mcp-contracts` 7.0.0) and
-runs only behind the platform gateway. It accepts traffic over mTLS with the gateway's internal JWT and answers 401 without it;
+runs only behind the platform gateway. The gateway connects to its address and pulls its manifest; it accepts only calls with the gateway's internal JWT and answers 401 without it;
 there is no anonymous mode. Calls to OpenSearch carry the calling user's own credential (a token the credential broker
 exchanges for OpenSearch), so OpenSearch Security roles, DLS and FLS still apply.
 
@@ -69,7 +69,7 @@ Behaviour worth knowing before you deploy:
   arrive more than a day late into such an index can be missed by `count_logs` and `aggregate_logs`.
 - `search_logs` pages with `search_after`. This needs `MCP_OPENSEARCH_TIEBREAKER_FIELD`, a field with a unique value in every
   document (not `_id`). Without it the tool returns the first page only.
-- Cursors are encrypted and bound to the user, the tool and the query. Every instance needs the same `MCP_CURSOR_KEY`.
+- Cursors are encrypted and bound to the user, the tool and the query. Several instances need the same `MCP_PAGING_CURSOR_KEY`; one instance keeps its own in the state directory.
 - Values from OpenSearch (field names and contents) reach the model as `UntrustedText`, never as instructions.
 
 ## Policies
@@ -94,7 +94,7 @@ manifest, and an administrator has to approve it before the server decides anyth
 ## Running against a real cluster
 
 `.run/` has two IntelliJ configurations. Start `LocalGateway` (the gateway of `mcp-platform-test` on `http://127.0.0.1:18500/mcp`,
-serving the JWKS and the policy data on port 18445 with the policies of this working tree and the mapping in
+serving the JWKS on port 18445 and pushing the policy data to the server with the policies of this working tree and the mapping in
 `.run/scope-mapping.json`), then `McpOpenSearch (dev, behind LocalGateway)` with `MCP_OPENSEARCH_URL` and
 `MCP_OPENSEARCH_INDEX_PREFIXES` set. Connect an MCP client to the gateway with `Authorization: Bearer <your token>`. Edit
 `.run/scope-mapping.json` and the `--groups` of the `LocalGateway` configuration for your prefixes, and restart `LocalGateway`
@@ -114,33 +114,31 @@ imitates the OpenSearch REST API, including aliases, data streams, hidden indice
 Platform artifacts (`mcp-platform-bom`, contracts) come from Maven Central or from `~/.m2`;
 the setup is described in the README of `mcp-starter-lib`. Linux and macOS with bash 3.2 or newer; Windows only through WSL2. The GitHub, GitLab and Jenkins files run `./mvnw -B verify`.
 
-The build writes `mcp-app/target/mcp-manifest.json`. That file, not the answer of a running server, is what CI registers with
-the gateway. Any change to a tool changes its `definitionHash` and needs a new approval in the gateway.
+The build writes `mcp-app/target/mcp-manifest.json`. That file is the document the running server serves at `/.well-known/mcp-manifest` for the gateway to pull, kept as an artifact so that a reviewer can read what a commit
+publishes. Any change to a tool changes its `definitionHash` and needs a new approval in the gateway.
 
 Modules: `mcp-core` (domain and ports), `mcp-application` (use cases), `mcp-integration` (OpenSearch adapter, version probe),
 `mcp-tools` (MCP tools), `mcp-app` (bootstrap, the single jar, end-to-end tests).
 
 ## Configuration
 
-`application.yml` is the production configuration: mTLS, JWKS of the gateway over TLS, `jti` store in Redis, `https` to
+`application.yml` is the production configuration: TLS on the server port, the JWKS of the gateway, `jti` in memory, `https` to
 OpenSearch. The server does not start without these:
 
 | Variable | Meaning |
 | --- | --- |
-| `MCP_TLS_KEYSTORE`, `MCP_TLS_TRUSTSTORE`, `MCP_TLS_STORE_PASSWORD` | PKCS12 files: server certificate (CN `mcp-opensearch`, SAN `mcp-opensearch.internal`, server and client use) and the internal CA |
-| `MCP_GATEWAY_JWKS_URI` | JWKS of the gateway's internal JWT |
+| `MCP_GATEWAY_JWKS_URI` | public key set of the gateway's internal JWT: `https://<domain of the platform>/.well-known/mcp-jwks.json` |
 | `MCP_CONNECT_URL` | Portal page for connecting an account, with `{system}`; sent in `credential_required` |
 | `MCP_OPENSEARCH_URL` | REST address of OpenSearch (`https` outside the `dev` profile) |
 | `MCP_OPENSEARCH_INDEX_PREFIXES` | Upper bound of index prefixes, comma-separated; a grant outside this list gives nothing |
-| `MCP_GATEWAY_POLICY_DATA_URL` | Policy data of the gateway (`/internal/v1/policy-data`), `https` only, fetched with this server's own certificate |
-| `MCP_INTERNAL_URL` | Address of this server in the manifest |
-| `MCP_REDIS_HOST`, `MCP_REDIS_PORT`, `MCP_REDIS_USER`, `MCP_REDIS_PASSWORD` | Redis for single-use `jti` (ACL user `mcp-opensearch`) |
 
 Optional settings: `MCP_OPENSEARCH_TIMESTAMP_FIELD` (`@timestamp`), `MCP_OPENSEARCH_QUERY_FIELDS` (`message`),
 `MCP_OPENSEARCH_LEVEL_FIELD`, `MCP_OPENSEARCH_SERVICE_FIELD`, `MCP_OPENSEARCH_HOST_FIELD`, `MCP_OPENSEARCH_RESULT_FIELDS`,
 `MCP_OPENSEARCH_MAX_RANGE` (`7d`), `MCP_OPENSEARCH_TIEBREAKER_FIELD`, `MCP_OPENSEARCH_TIEBREAKER_TYPE`,
-`MCP_OPENSEARCH_CALL_BUDGET` (`20s`), `MCP_OPENSEARCH_SSL_BUNDLE`, `MCP_OPENSEARCH_ASSUME_TESTED_VERSION`, `MCP_CURSOR_KEY`,
-`MCP_GATEWAY_TLS_NAME` (only when the host in the policy data address is not a name of the gateway certificate), `MCP_PORT` (`8443`) and `MCP_BIND`. Defaults, property names and the fixed timeouts are in the
+`MCP_OPENSEARCH_CALL_BUDGET` (`20s`), `MCP_OPENSEARCH_SSL_BUNDLE`, `MCP_OPENSEARCH_ASSUME_TESTED_VERSION`, `MCP_PAGING_CURSOR_KEY`,
+`MCP_TLS_CERT` and `MCP_TLS_KEY`, or `MCP_TLS_KEYSTORE` with `MCP_TLS_STORE_PASSWORD` (your own certificate; without them the server generates a
+self-signed one into `MCP_STATE_DIR`, and `MCP_PLAIN_HTTP=true` means no TLS inside the platform network), `MCP_REDIS_HOST` and the other `MCP_REDIS_*`
+(one-time `jti` in Redis instead of memory: for several instances behind a balancer, which also need the same `MCP_PAGING_CURSOR_KEY`) and `MCP_PORT` (`8443`) and `MCP_BIND`. Defaults, property names and the fixed timeouts are in the
 [server environment reference](https://github.com/aiwcorpo/mcp-docs/blob/main/docs/reference/env-servers.md)
 (`docs/reference/env-servers.md` in `mcp-docs`). The MCP endpoint is `/mcp`; without a JWT only `/actuator/health` answers.
 
@@ -154,7 +152,7 @@ the first run. `do_not_fail_on_forbidden: true` in the role makes a list that in
 
 The server is one jar or one image. For a VM with systemd the jar `mcp-app/target/mcp-opensearch.jar` and the environment template `deploy/systemd/mcp-opensearch.env.template` are installed as in `deploy/README.md`; the [VM installation guide](https://github.com/aiwcorpo/mcp-docs/blob/main/docs/operator/install-vm.md) in `mcp-docs` has the steps. For a
 container run `docker build -t mcp-opensearch:<tag> .` after `./mvnw verify` (image `eclipse-temurin:25-jre`, user `mcp`,
-port 8443). Operating notes, upgrades and troubleshooting are in `mcp-docs`.
+port 8443, a volume at `/var/lib/mcp/state`). Operating notes, upgrades and troubleshooting are in `mcp-docs`.
 
 ## Run locally without the platform
 
@@ -172,7 +170,7 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST -H 'Content-Type: application/j
 The `dev` profile accepts JWTs signed with the published test keys of the contracts and needs no client certificate. For that
 reason it listens on loopback only, and the starter refuses to start `dev` on another address. Never enable it on a host or in a
 container that the gateway connects to, and never put `SPRING_PROFILES_ACTIVE=dev` into an `.env` file, a systemd unit or an
-image. The local dev stack is not public yet; to run the platform with mTLS use the Compose install in `mcp-docs` (`examples/compose`).
+image. The local dev stack is not public yet; to run the platform use the Compose install in `mcp-docs` (`examples/compose`).
 
 ## Documentation
 

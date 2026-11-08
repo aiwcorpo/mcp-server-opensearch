@@ -6,6 +6,16 @@ Versions follow SemVer, newest first.
 
 Major release: the policies of the server live in this repository. Built on `mcp-platform-starter` 4.0.0 and `mcp-contracts` 7.0.0.
 
+- CC-249, the gateway connects to the server by its address: the server needs no certificate from the internal CA, no mTLS and no policy data
+  address. The server serves `GET /.well-known/mcp-manifest` and takes `POST /.well-known/mcp-policy-data`; the gateway pulls the manifest and
+  pushes the policy data, so the registration of the manifest from the pipeline is gone. `MCP_GATEWAY_JWKS_URI` is the public
+  `https://<domain>/.well-known/mcp-jwks.json`. TLS is the author's own certificate (`MCP_TLS_CERT` and `MCP_TLS_KEY`, or `MCP_TLS_KEYSTORE`), a self-signed
+  one generated once into `MCP_STATE_DIR` (its fingerprint is in the log at start), or `MCP_PLAIN_HTTP=true`. The one-time `jti` is kept in memory unless
+  `MCP_REDIS_HOST` is set; the cursor key (`MCP_PAGING_CURSOR_KEY`) is kept in the state directory. Removed from the configuration and from `deploy/`:
+  `MCP_GATEWAY_POLICY_DATA_URL`, `MCP_GATEWAY_TLS_NAME`, `MCP_INTERNAL_URL`, `MCP_TLS_TRUSTSTORE`, the Redis service of `compose.yaml`; `certs/` is optional.
+  `deploy/README.md` has the new procedure (the author starts the server, the operator enters its address in the portal and approves the connection after
+  comparing the fingerprint from the log).
+  `MCP_CURSOR_KEY` is now `MCP_PAGING_CURSOR_KEY`, the name the starter reads.
 - Cedar policies in `mcp-app/src/main/resources/mcp/policies/` (schema in the namespace `OpenSearch`, `resource-types.json`, `read.cedar`,
   `update.cedar`), carried in the manifest with `policiesHash`. They replace `policies/opensearch/` of the `mcp-policies` repository;
   the resource rules are the same, except what the platform now generates for every server: the forbid for indices tagged
