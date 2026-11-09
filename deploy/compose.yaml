@@ -6,6 +6,10 @@
 #
 # Closed network: MCP_REGISTRY in a .env file next to this one points the image to your registry.
 
+# Every deploy directory is called "deploy": without a name of its own, two servers on one host would share one Compose
+# project and its state volume (certificate and cursor key).
+name: mcp-opensearch
+
 services:
   mcp-opensearch:
     image: ${MCP_REGISTRY:-ghcr.io/aiwcorpo}/mcp-server-opensearch:${MCP_OPENSEARCH_VERSION:-2.0.0}
