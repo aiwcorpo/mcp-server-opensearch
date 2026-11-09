@@ -32,6 +32,10 @@ Major release: the policies of the server live in this repository. Built on `mcp
   `StateDirectory` of the unit. Added: `MCP_GATEWAY_POLICY_DATA_URL` (and `MCP_GATEWAY_TLS_NAME` when the host in it is not a name of the
   gateway certificate). The server connects to the gateway for the policy data with its own certificate, which now needs the usage
   `clientAuth` next to `serverAuth` (CN `mcp-opensearch`, SAN `mcp-opensearch.internal`).
+- New tools: `get_index_stats` (document count, store size, indexing and search totals per index of a prefix, from `_stats`, same prefix
+  authorization and paging as `list_indices`; the numbers ignore document level security) and `find_log_patterns` (groups a capped sample of
+  up to 500 messages, read with the query of `search_logs`, into patterns with counts and one example; numbers, hex ids, UUIDs, IPs and
+  timestamps are masked in the server). `get_cluster_health` also returns `pendingTasks`. Feature `index_stats` joins the tested set.
 - `deploy/` has `compose.yaml`, `mcp-opensearch.env` and `certs/` next to the systemd files, and the procedure that adds the system
   `opensearch` in the broker and the server `mcp-opensearch` in the gateway without restarting anything.
 - `.run/` has IntelliJ configurations for the server and for the `LocalGateway` of `mcp-platform-test`, with the policies directory and a scope mapping.

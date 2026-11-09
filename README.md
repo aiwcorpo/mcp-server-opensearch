@@ -38,7 +38,7 @@ were not recorded from a live cluster.
 
 ## Tools
 
-Nine tools, all `READ_ONLY` with action `read`. The client sees them as `opensearch__<tool>`.
+Eleven tools, all `READ_ONLY` with action `read`. The client sees them as `opensearch__<tool>`.
 
 | Tool | What it does |
 | --- | --- |
@@ -46,10 +46,12 @@ Nine tools, all `READ_ONLY` with action `read`. The client sees them as `opensea
 | `aggregate_logs` | Counts documents by `level`, `service` or `host` |
 | `count_logs` | Counts documents that match a filter |
 | `get_document` | Returns one document by index and id |
-| `list_indices` | Lists indices of a prefix with their health (no document counts or sizes: index statistics ignore DLS) |
+| `list_indices` | Lists indices of a prefix with their health (no document counts or sizes) |
+| `get_index_stats` | Document count, store size and indexing and search totals of the indices of a prefix, paged (index statistics ignore DLS: they count documents the caller may not read) |
 | `get_index_mapping` | Returns the fields of one index that this server uses, with types |
 | `validate_query` | Asks OpenSearch whether it accepts the query the server would build |
-| `get_cluster_health` | Cluster status and node and shard counts |
+| `find_log_patterns` | Groups the messages of a capped sample (up to 500, newest first) into patterns with counts and one example each; numbers, hex ids, UUIDs, IPs and timestamps are masked in the server, no plugin needed |
+| `get_cluster_health` | Cluster status, node and shard counts and pending tasks |
 | `get_backend_info` | Version and features from the probe; does not call OpenSearch |
 
 Risk, action and the group a call requires for every tool are in the generated
@@ -145,7 +147,7 @@ self-signed one into `MCP_STATE_DIR`, and `MCP_PLAIN_HTTP=true` means no TLS ins
 What the cluster needs: the Security plugin with JWT or OpenID Connect authentication that accepts the broker's token and maps
 the user's backend roles to OpenSearch roles. The role needs `indices:admin/resolve/index` plus the read actions of the tools
 in use (`indices:data/read/search*`, `indices:data/read/get`, `indices:admin/mappings/get`, `indices:admin/validate/query`,
-and for `list_indices` and `get_cluster_health` the monitor actions). Names differ between plugin releases, so confirm them on
+and for `list_indices`, `get_index_stats` and `get_cluster_health` the monitor actions, `indices:monitor/stats` for the statistics). Names differ between plugin releases, so confirm them on
 the first run. `do_not_fail_on_forbidden: true` in the role makes a list that includes one forbidden index return the rest.
 
 ## Install
