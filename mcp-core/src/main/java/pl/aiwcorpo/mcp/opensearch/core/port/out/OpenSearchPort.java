@@ -6,6 +6,7 @@ import pl.aiwcorpo.mcp.opensearch.core.domain.AggregateQuery;
 import pl.aiwcorpo.mcp.opensearch.core.domain.ClusterHealth;
 import pl.aiwcorpo.mcp.opensearch.core.domain.IndexInfo;
 import pl.aiwcorpo.mcp.opensearch.core.domain.IndexMapping;
+import pl.aiwcorpo.mcp.opensearch.core.domain.IndexStats;
 import pl.aiwcorpo.mcp.opensearch.core.domain.LogCount;
 import pl.aiwcorpo.mcp.opensearch.core.domain.LogPage;
 import pl.aiwcorpo.mcp.opensearch.core.domain.QueryCheck;
@@ -46,6 +47,9 @@ public interface OpenSearchPort {
 
     /** Rows of {@code _cat/indices} for the concrete {@code indices}, in the order given; names OpenSearch omits are skipped. */
     List<IndexInfo> indexInfo(List<String> indices);
+
+    /** {@code GET _stats/docs,store,indexing,search} for the concrete {@code indices}, in the order given; names OpenSearch omits are skipped. */
+    List<IndexStats> indexStats(List<String> indices);
 
     /** Empty when the index does not exist or is not visible to the caller. */
     Optional<IndexMapping> findMapping(String index);

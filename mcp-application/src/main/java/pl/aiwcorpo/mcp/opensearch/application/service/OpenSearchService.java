@@ -13,6 +13,8 @@ import pl.aiwcorpo.mcp.opensearch.core.domain.ClusterHealth;
 import pl.aiwcorpo.mcp.opensearch.core.domain.IndexInfo;
 import pl.aiwcorpo.mcp.opensearch.core.domain.IndexMapping;
 import pl.aiwcorpo.mcp.opensearch.core.domain.IndexPage;
+import pl.aiwcorpo.mcp.opensearch.core.domain.IndexStats;
+import pl.aiwcorpo.mcp.opensearch.core.domain.IndexStatsPage;
 import pl.aiwcorpo.mcp.opensearch.core.domain.LogCount;
 import pl.aiwcorpo.mcp.opensearch.core.domain.LogPage;
 import pl.aiwcorpo.mcp.opensearch.core.domain.QueryCheck;
@@ -92,6 +94,28 @@ public class OpenSearchService implements OpenSearchUseCase {
 
     @Override
     public IndexPage listIndices(String prefix, @Nullable String after, int limit, Predicate<String> readable) {
+        NamePage names = namePage(prefix, after, limit, readable);
+        if (names.page().isEmpty()) {
+            return new IndexPage(List.of(), null);
+        }
+        IndexScope scope = scopes.current();
+        List<IndexInfo> rows = openSearch.indexInfo(names.page()).stream().filter(row -> scope.covers(row.name())).toList();
+        return new IndexPage(rows, names.lastName());
+    }
+
+    @Override
+    public IndexStatsPage indexStats(String prefix, @Nullable String after, int limit, Predicate<String> readable) {
+        NamePage names = namePage(prefix, after, limit, readable);
+        if (names.page().isEmpty()) {
+            return new IndexStatsPage(List.of(), null);
+        }
+        IndexScope scope = scopes.current();
+        List<IndexStats> rows = openSearch.indexStats(names.page()).stream().filter(row -> scope.covers(row.name())).toList();
+        return new IndexStatsPage(rows, names.lastName());
+    }
+
+    /** One page of the names {@link #listIndices} and {@link #indexStats} send to OpenSearch, cut so that the request path stays short. */
+    private NamePage namePage(String prefix, @Nullable String after, int limit, Predicate<String> readable) {
         List<String> candidates = indices.names().stream()
                 .filter(name -> name.equals(prefix) || name.startsWith(prefix + "-"))
                 .filter(name -> after == null || name.compareTo(after) > 0)
@@ -108,12 +132,10 @@ public class OpenSearchService implements OpenSearchUseCase {
             page.add(name);
             pathChars = next;
         }
-        if (page.isEmpty()) {
-            return new IndexPage(List.of(), null);
-        }
-        IndexScope scope = scopes.current();
-        List<IndexInfo> rows = openSearch.indexInfo(page).stream().filter(row -> scope.covers(row.name())).toList();
-        return new IndexPage(rows, page.size() < candidates.size() ? page.getLast() : null);
+        return new NamePage(page, !page.isEmpty() && page.size() < candidates.size() ? page.getLast() : null);
+    }
+
+    private record NamePage(List<String> page, @Nullable String lastName) {
     }
 
     @Override

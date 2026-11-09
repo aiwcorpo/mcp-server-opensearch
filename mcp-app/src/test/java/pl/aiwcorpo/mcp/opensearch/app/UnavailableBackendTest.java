@@ -55,6 +55,8 @@ class UnavailableBackendTest extends ServerTestSupport {
                     call(client, "get_document", Map.of("index", "logs-team-a-2026.10.27", "id", "Xk3n8ZIBdLrT0q1aHf2p")),
                     call(client, "get_index_mapping", Map.of("index", "logs-team-a-2026.10.27")),
                     call(client, "list_indices", Map.of("index_prefix", "logs-team-a")),
+                    call(client, "get_index_stats", Map.of("index_prefix", "logs-team-a")),
+                    call(client, "find_log_patterns", range),
                     call(client, "validate_query", range), call(client, "get_cluster_health", Map.of()))) {
                 assertThat(result.isError()).isTrue();
                 assertThat(text(result)).contains("\"error\":\"upstream_unavailable\"");
@@ -62,7 +64,7 @@ class UnavailableBackendTest extends ServerTestSupport {
             assertThat(text(call(client, "get_backend_info", Map.of()))).contains("\"state\":\"unavailable\"");
         }
         assertThat(BACKEND.requests().stream().filter(r -> r.path().endsWith("/_search") || r.path().contains("/_cat/")
-                || r.path().endsWith("/_mapping") || r.path().endsWith("/_validate/query")
+                || r.path().endsWith("/_mapping") || r.path().contains("/_stats/") || r.path().endsWith("/_validate/query")
                 || r.path().equals("/_cluster/health"))).isEmpty();
     }
 }

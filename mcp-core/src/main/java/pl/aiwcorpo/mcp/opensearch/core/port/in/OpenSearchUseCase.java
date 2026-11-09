@@ -10,6 +10,7 @@ import pl.aiwcorpo.mcp.opensearch.core.domain.ClusterHealth;
 import pl.aiwcorpo.mcp.opensearch.core.domain.IndexDocument;
 import pl.aiwcorpo.mcp.opensearch.core.domain.IndexMapping;
 import pl.aiwcorpo.mcp.opensearch.core.domain.IndexPage;
+import pl.aiwcorpo.mcp.opensearch.core.domain.IndexStatsPage;
 import pl.aiwcorpo.mcp.opensearch.core.domain.LogCount;
 import pl.aiwcorpo.mcp.opensearch.core.domain.LogPage;
 import pl.aiwcorpo.mcp.opensearch.core.domain.QueryCheck;
@@ -75,6 +76,9 @@ public interface OpenSearchUseCase {
      * null for the first page). At most {@code limit} rows; {@code lastName} of the page is set when more follow.
      */
     IndexPage listIndices(String prefix, @Nullable String after, int limit, Predicate<String> readable);
+
+    /** Statistics of the same indices {@link #listIndices} would list, paged the same way. */
+    IndexStatsPage indexStats(String prefix, @Nullable String after, int limit, Predicate<String> readable);
 
     /** Fields of the index {@link #resolveIndex} returned. */
     IndexMapping getIndexMapping(String index);

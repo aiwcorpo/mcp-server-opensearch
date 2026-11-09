@@ -67,6 +67,11 @@ class QueryScopeIndicesTest {
         }
 
         @Override
+        public List<pl.aiwcorpo.mcp.opensearch.core.domain.IndexStats> indexStats(List<String> indices) {
+            throw new AssertionError();
+        }
+
+        @Override
         public Optional<IndexMapping> findMapping(String index) {
             throw new AssertionError();
         }

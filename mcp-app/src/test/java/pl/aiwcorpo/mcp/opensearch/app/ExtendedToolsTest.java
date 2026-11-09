@@ -11,7 +11,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * count_logs, list_indices, get_index_mapping, validate_query, get_cluster_health and get_backend_info against the
+ * count_logs, list_indices, get_index_stats, find_log_patterns, get_index_mapping, validate_query, get_cluster_health and get_backend_info against the
  * fixtures of OpenSearch 2.19 and 3.x: the same requests, the same results for what the server reads from the answers.
  */
 class ExtendedToolsTest extends ServerTestSupport {
@@ -107,6 +107,8 @@ class ExtendedToolsTest extends ServerTestSupport {
             assertCredentialRequired(call(client, "count_logs", range("logs-team-a")));
             assertCredentialRequired(call(client, "list_indices", Map.of("index_prefix", "logs-team-a")));
             assertCredentialRequired(call(client, "get_cluster_health", Map.of()));
+            assertCredentialRequired(call(client, "get_index_stats", Map.of("index_prefix", "logs-team-a")));
+            assertCredentialRequired(call(client, "find_log_patterns", range("logs-team-a")));
             assertCredentialRequired(call(client, "validate_query", range("logs-team-a")));
             assertCredentialRequired(call(client, "get_index_mapping", Map.of("index", "logs-team-a-2026.10.27")));
         }
@@ -201,6 +203,130 @@ class ExtendedToolsTest extends ServerTestSupport {
             assertInvalidArgument(call(client, "list_indices", Map.of("index_prefix", "logs-team-a", "size", 0)));
             assertInvalidArgument(call(client, "list_indices", Map.of("index_prefix", "logs-*")));
         }
+    }
+
+    @Test
+    void indexStatsGiveTheFixedMetricSetOfTheReadableIndicesInPages() {
+        for (String version : VERSIONS) {
+            BACKEND.reset();
+            BACKEND.useFixtures(version);
+            try (McpSyncClient client = clientWithCredential(PAT)) {
+                Map<String, Object> arguments = new HashMap<>(Map.of("index_prefix", "logs-team-a", "size", 1));
+                McpSchema.CallToolResult first = call(client, "get_index_stats", arguments);
+
+                assertThat(first.isError()).as(version + ": " + text(first)).isFalse();
+                assertThat(text(first)).contains("\"name\":\"logs-team-a-2026.10.26\"", "\"docsCount\":184203",
+                        "\"storeSizeBytes\":73400320", "\"indexingTotal\":184500", "\"searchQueryTotal\":912",
+                        "\"nextCursor\":\"")
+                        .doesNotContain("logs-team-a-2026.10.27", "logs-team-a-hr-1", "logs-team-ab-1", "logs-team-a-restricted",
+                                "logs-team-a-hidden", "uuid", "_shards");
+                arguments.put("cursor", nextCursor(text(first)));
+
+                McpSchema.CallToolResult second = call(client, "get_index_stats", arguments);
+
+                assertThat(text(second)).contains("\"name\":\"logs-team-a-2026.10.27\"", "\"docsCount\":91877",
+                        "\"nextCursor\":null").doesNotContain("logs-team-a-2026.10.26");
+            }
+            List<StubBackend.Request> stats = BACKEND.requests().stream().filter(r -> r.path().contains("/_stats/")).toList();
+            assertThat(stats).extracting(StubBackend.Request::decodedPath).as(version + ": only the names of the page, a fixed metric set")
+                    .containsExactly("/logs-team-a-2026.10.26/_stats/docs,store,indexing,search",
+                            "/logs-team-a-2026.10.27/_stats/docs,store,indexing,search");
+            assertThat(stats).allSatisfy(r -> assertThat(r.query()).contains("level=indices", "expand_wildcards=open"));
+        }
+    }
+
+    @Test
+    void indexStatsNeverReachBeyondTheScopeOrThePolicy() {
+        try (McpSyncClient client = clientInGroups(PAT, READ_GROUP, GRANT_TEAM_A)) {
+            assertThat(text(call(client, "get_index_stats", Map.of("index_prefix", "logs-team-b")))).contains("\"items\":[]");
+            assertThat(text(call(client, "get_index_stats", Map.of("index_prefix", "logs-team-a-hr")))).contains("\"items\":[]");
+            assertThat(text(call(client, "get_index_stats", Map.of("index_prefix", "logs-team-a")))).doesNotContain("logs-team-b", "hr-1");
+        }
+        try (McpSyncClient client = clientInGroups(PAT, READ_GROUP)) {
+            assertThat(text(call(client, "get_index_stats", Map.of("index_prefix", "logs-team-a")))).contains("\"items\":[]");
+        }
+        assertThat(BACKEND.requests().stream().filter(r -> r.path().contains("/_stats/")).map(StubBackend.Request::decodedPath))
+                .allMatch(p -> p.startsWith("/logs-team-a-2026"));
+    }
+
+    @Test
+    void indexStatsRefuseWhatListIndicesRefusesAndKeepCursorsToTheirTool() {
+        String cursor;
+        try (McpSyncClient client = clientWithCredential(PAT)) {
+            assertInvalidArgument(call(client, "get_index_stats", Map.of("index_prefix", "logs-*")));
+            assertInvalidArgument(call(client, "get_index_stats", Map.of("index_prefix", "logs-team-a", "size", 51)));
+            assertInvalidArgument(call(client, "get_index_stats", Map.of("index_prefix", "logs-team-a", "size", 0)));
+            cursor = nextCursor(text(call(client, "get_index_stats", Map.of("index_prefix", "logs-team-a", "size", 1))));
+
+            assertInvalidArgument(call(client, "get_index_stats", Map.of("index_prefix", "logs-team-a", "size", 2, "cursor", cursor)));
+            assertInvalidArgument(call(client, "list_indices", Map.of("index_prefix", "logs-team-a", "size", 1, "cursor", cursor)));
+            assertThat(call(client, "get_index_stats", Map.of("index_prefix", "logs-team-a", "size", 1, "cursor", cursor)).isError()).isFalse();
+        }
+    }
+
+    @Test
+    void logPatternsGroupTheSampleAndSayItIsOne() {
+        Map<String, Object> arguments = range("logs-team-a");
+        arguments.put("text", "payment failed");
+        arguments.put("level", "ERROR");
+        try (McpSyncClient client = clientWithCredential(PAT)) {
+            McpSchema.CallToolResult result = call(client, "find_log_patterns", arguments);
+
+            assertThat(result.isError()).as(text(result)).isFalse();
+            assertThat(text(result)).contains("\"indexPrefix\":\"logs-team-a\"", "\"sample\":true", "\"sampledMessages\":2",
+                    "\"sampleLimit\":200", "\"count\":1", "\"otherPatterns\":0", "sample of the newest matching messages",
+                    "\"kind\":\"untrusted-data\"", "payment failed <script>alert(1)</script> & retried", "error: disk full")
+                    .as("hits of the restricted index and of other prefixes are not part of the sample")
+                    .doesNotContain("restricted payroll", "salary", "neighbour", "logs-team-a-2026", "not-for-the-model");
+        }
+        StubBackend.Request search = toIndex("/_search").getFirst();
+        assertThat(search.decodedPath()).isEqualTo(BOTH_DAYS_PATH + "_search");
+        assertThat(search.body()).contains("\"size\":100", "\"multi_match\":{\"query\":\"payment failed\"",
+                "\"log.level\":{", "\"value\":\"ERROR\"").doesNotContain("\"aggs\"", "script\":");
+    }
+
+    @Test
+    void logPatternsReadOnlyAsManyMessagesAsTheSampleSizeAllows() {
+        try (McpSyncClient client = clientWithCredential(PAT)) {
+            Map<String, Object> arguments = range("logs-team-a");
+            arguments.put("size", 1);
+            arguments.put("sample_size", 1);
+            McpSchema.CallToolResult result = call(client, "find_log_patterns", arguments);
+
+            assertThat(result.isError()).as(text(result)).isFalse();
+            assertThat(text(result)).contains("\"sampledMessages\":1", "\"sampleLimit\":1");
+        }
+        assertThat(toIndex("/_search").getFirst().body()).contains("\"size\":1,");
+    }
+
+    @Test
+    void logPatternsWithoutAnyGrantAreEmptyAndAskNoOne() {
+        try (McpSyncClient client = clientInGroups(PAT, READ_GROUP)) {
+            String result = text(call(client, "find_log_patterns", range("logs-team-a")));
+
+            assertThat(result).contains("\"sampledMessages\":0", "\"patterns\":[]", "\"sample\":true");
+        }
+        assertThat(toIndex("/_search")).isEmpty();
+    }
+
+    @Test
+    void logPatternsRefuseWhatSearchRefuses() {
+        Map<String, Object> pattern = range("logs-*");
+        Map<String, Object> level = range("logs-team-a");
+        level.put("level", "info");
+        Map<String, Object> reversed = range("logs-team-a");
+        reversed.put("from", "2026-10-27T10:00:00Z");
+        reversed.put("to", "2026-10-27T08:00:00Z");
+        Map<String, Object> tooMany = range("logs-team-a");
+        tooMany.put("sample_size", 501);
+        Map<String, Object> noPatterns = range("logs-team-a");
+        noPatterns.put("size", 0);
+        try (McpSyncClient client = clientWithCredential(PAT)) {
+            for (Map<String, Object> arguments : List.of(pattern, level, reversed, tooMany, noPatterns)) {
+                assertInvalidArgument(call(client, "find_log_patterns", arguments));
+            }
+        }
+        assertThat(BACKEND.requests()).isEmpty();
     }
 
     @Test
@@ -310,7 +436,7 @@ class ExtendedToolsTest extends ServerTestSupport {
                 McpSchema.CallToolResult result = call(client, "get_cluster_health", Map.of());
 
                 assertThat(result.isError()).as(version + ": " + text(result)).isFalse();
-                assertThat(text(result)).contains("\"nodes\":3", "\"timedOut\":false").doesNotContain("logs-cluster", "cluster_name");
+                assertThat(text(result)).contains("\"nodes\":3", "\"timedOut\":false", "\"pendingTasks\":0").doesNotContain("logs-cluster", "cluster_name");
                 if (version.equals(StubBackend.FIXTURES_3)) {
                     assertThat(text(result)).contains("\"status\":\"green\"", "\"unassignedShards\":0", "\"activeShardsPercent\":100.0");
                 } else {

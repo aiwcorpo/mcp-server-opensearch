@@ -79,6 +79,11 @@ public record OpenSearchSearchProperties(String timestampField, List<String> que
         return fields;
     }
 
+    /** The query field that is also a result field: the message {@code find_log_patterns} reads from the hits. */
+    public String messageField() {
+        return queryFields.stream().filter(resultFields::contains).findFirst().orElse(queryFields.getFirst());
+    }
+
     public boolean pagingEnabled() {
         return !tiebreakerField.isEmpty();
     }

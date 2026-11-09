@@ -66,7 +66,7 @@ public final class ManifestExport {
 
         ToolRiskRegistry registry = new ToolRiskRegistry(ToolRiskRegistry.Unclassified.FAIL);
         List<McpServerFeatures.SyncToolSpecification> specifications = new ArrayList<>();
-        for (ToolCallback callback : new McpToolsConfiguration().mcpTools(new OpenSearchTools(null, new SearchLimits(Duration.ofDays(1), Duration.ofSeconds(20)), null, null, null, null)).getToolCallbacks()) {
+        for (ToolCallback callback : new McpToolsConfiguration().mcpTools(new OpenSearchTools(null, new SearchLimits(Duration.ofDays(1), Duration.ofSeconds(20), "message"), null, null, null, null)).getToolCallbacks()) {
             registry.register(callback);
             specifications.add(McpToolUtils.toSyncToolSpecification(callback));
         }

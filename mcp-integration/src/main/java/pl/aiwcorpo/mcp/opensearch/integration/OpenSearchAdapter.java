@@ -31,6 +31,7 @@ import pl.aiwcorpo.mcp.opensearch.core.domain.AggregateQuery;
 import pl.aiwcorpo.mcp.opensearch.core.domain.ClusterHealth;
 import pl.aiwcorpo.mcp.opensearch.core.domain.IndexInfo;
 import pl.aiwcorpo.mcp.opensearch.core.domain.IndexMapping;
+import pl.aiwcorpo.mcp.opensearch.core.domain.IndexStats;
 import pl.aiwcorpo.mcp.opensearch.core.domain.LogCount;
 import pl.aiwcorpo.mcp.opensearch.core.domain.LogPage;
 import pl.aiwcorpo.mcp.opensearch.core.domain.MappingField;
@@ -59,7 +60,7 @@ import pl.aiwcorpo.mcp.platform.security.CredentialRequiredException;
  * <p>Only these endpoints are used: {@code GET _resolve/index/{expr}} (the scope of the caller, never an
  * argument of the model), {@code POST {names}/_search} with a body the server builds (a bool query of the model's
  * values; a terms aggregation on a configured field for {@code aggregate_logs}; size 0 with an exact total for
- * {@code count_logs}), {@code POST {names}/_validate/query}, {@code GET _cat/indices/{names}}, {@code GET {index}/_mapping},
+ * {@code count_logs}), {@code POST {names}/_validate/query}, {@code GET _cat/indices/{names}}, {@code GET {names}/_stats/docs,store,indexing,search}, {@code GET {index}/_mapping},
  * {@code GET {index}/_doc/{id}} and {@code GET _cluster/health}. All of them but the cluster health go to concrete index names. No
  * {@code _msearch}, {@code _mget}, scripts, {@code _count}, SQL, PPL or {@code ?q=}. 404 and 403 both become "not visible"
  * ({@code not_found_or_denied}), 401 means the stored credential no longer works
@@ -276,6 +277,31 @@ public class OpenSearchAdapter implements OpenSearchPort {
         return indices.stream().map(byName::get).filter(java.util.Objects::nonNull).toList();
     }
 
+    @Override
+    public List<IndexStats> indexStats(List<String> indices) {
+        BackendCredential credential = credential();
+        StatsResponse response = send(() -> client.get()
+                .uri("/{expression}/_stats/docs,store,indexing,search?level=indices&" + INDICES_OPTIONS,
+                        String.join(",", indices))
+                .headers(credential::applyTo)
+                .retrieve()
+                .body(StatsResponse.class));
+        if (response == null || response.indices() == null) {
+            throw new BackendResponseException("no indices section");
+        }
+        List<IndexStats> rows = new ArrayList<>();
+        for (String name : indices) {
+            IndexStatsEntry entry = response.indices().get(name);
+            if (entry != null) {
+                rows.add(new IndexStats(name, entry.primaries() == null || entry.primaries().docs() == null ? null : entry.primaries().docs().count(),
+                        entry.total() == null || entry.total().store() == null ? null : entry.total().store().sizeInBytes(),
+                        entry.primaries() == null || entry.primaries().indexing() == null ? null : entry.primaries().indexing().indexTotal(),
+                        entry.total() == null || entry.total().search() == null ? null : entry.total().search().queryTotal()));
+            }
+        }
+        return rows;
+    }
+
     private static String health(String value) {
         return "green".equals(value) || "yellow".equals(value) || "red".equals(value) ? value : null;
     }
@@ -356,7 +382,7 @@ public class OpenSearchAdapter implements OpenSearchPort {
         }
         return new ClusterHealth(response.status(), Boolean.TRUE.equals(response.timedOut()), response.nodes(),
                 response.activeShards(), orZero(response.relocating()), orZero(response.initializing()),
-                orZero(response.unassigned()), response.percent() == null ? 0 : response.percent());
+                orZero(response.unassigned()), orZero(response.pending()), response.percent() == null ? 0 : response.percent());
     }
 
     private static long orZero(Long value) {
@@ -693,10 +719,39 @@ public class OpenSearchAdapter implements OpenSearchPort {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
+    record StatsResponse(Map<String, IndexStatsEntry> indices) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    record IndexStatsEntry(StatsSection primaries, StatsSection total) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    record StatsSection(DocsStats docs, StoreStats store, IndexingStats indexing, SearchStats search) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    record DocsStats(Long count) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    record StoreStats(@JsonProperty("size_in_bytes") Long sizeInBytes) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    record IndexingStats(@JsonProperty("index_total") Long indexTotal) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    record SearchStats(@JsonProperty("query_total") Long queryTotal) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
     record HealthResponse(String status, @JsonProperty("timed_out") Boolean timedOut,
             @JsonProperty("number_of_nodes") Long nodes, @JsonProperty("active_shards") Long activeShards,
             @JsonProperty("relocating_shards") Long relocating, @JsonProperty("initializing_shards") Long initializing,
             @JsonProperty("unassigned_shards") Long unassigned,
+            @JsonProperty("number_of_pending_tasks") Long pending,
             @JsonProperty("active_shards_percent_as_number") Double percent) {
     }
 }

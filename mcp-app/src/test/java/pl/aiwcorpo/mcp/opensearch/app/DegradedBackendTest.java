@@ -45,7 +45,7 @@ class DegradedBackendTest extends ServerTestSupport {
             McpSchema.CallToolResult result = call(client, "get_backend_info", Map.of());
 
             assertThat(text(result)).contains("\"state\":\"degraded\"", "\"version\":null", "the root endpoint refused an anonymous request",
-                    "\"search\"", "\"get_document\"").doesNotContain("cluster_health", "list_indices", "validate_query");
+                    "\"search\"", "\"get_document\"").doesNotContain("cluster_health", "list_indices", "validate_query", "index_stats");
         }
         assertThat(BACKEND.probeAuthorizations()).as("the probe asked anonymously").contains("null");
     }
@@ -57,6 +57,7 @@ class DegradedBackendTest extends ServerTestSupport {
                     "to", "2026-10-27T10:00:00Z");
             for (McpSchema.CallToolResult result : List.of(call(client, "get_cluster_health", Map.of()),
                     call(client, "list_indices", Map.of("index_prefix", "logs-team-a")),
+                    call(client, "get_index_stats", Map.of("index_prefix", "logs-team-a")),
                     call(client, "validate_query", range))) {
                 assertThat(result.isError()).isTrue();
                 assertThat(text(result)).contains(UNAVAILABLE, "get_backend_info");

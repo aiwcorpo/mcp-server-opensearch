@@ -22,6 +22,8 @@ import pl.aiwcorpo.mcp.platform.text.UntrustedText;
 import pl.aiwcorpo.mcp.opensearch.core.domain.GroupBy;
 import pl.aiwcorpo.mcp.opensearch.core.domain.IndexDocument;
 import pl.aiwcorpo.mcp.opensearch.core.domain.IndexScope;
+import pl.aiwcorpo.mcp.opensearch.core.domain.IndexStats;
+import pl.aiwcorpo.mcp.opensearch.core.domain.IndexStatsPage;
 import pl.aiwcorpo.mcp.opensearch.core.domain.LogBuckets;
 import pl.aiwcorpo.mcp.opensearch.core.domain.LogFilter;
 import pl.aiwcorpo.mcp.opensearch.core.domain.LogHit;
@@ -47,6 +49,7 @@ class OpenSearchServiceTest {
     private final List<List<String>> aggregated = new ArrayList<>();
     private final List<List<String>> counted = new ArrayList<>();
     private final List<List<String>> described = new ArrayList<>();
+    private final List<List<String>> statted = new ArrayList<>();
     private int resolutions;
 
     private final ScopedIndices indices = new ScopedIndices() {
@@ -93,13 +96,19 @@ class OpenSearchServiceTest {
         }
 
         @Override
+        public List<IndexStats> indexStats(List<String> targets) {
+            statted.add(targets);
+            return targets.stream().map(name -> new IndexStats(name, 1L, 2L, 3L, 4L)).toList();
+        }
+
+        @Override
         public Optional<IndexMapping> findMapping(String index) {
             return Optional.ofNullable(mapping);
         }
 
         @Override
         public ClusterHealth clusterHealth() {
-            return new ClusterHealth("green", false, 3, 10, 0, 0, 0, 100);
+            return new ClusterHealth("green", false, 3, 10, 0, 0, 0, 2, 100);
         }
 
         @Override
@@ -306,6 +315,38 @@ class OpenSearchServiceTest {
         assertThat(second.indices()).extracting(IndexInfo::name).containsExactly("logs-team-a-2", "logs-team-a-3");
         assertThat(second.lastName()).as("the last page has no continuation").isNull();
         assertThat(described).containsExactly(List.of("logs-team-a", "logs-team-a-1"), List.of("logs-team-a-2", "logs-team-a-3"));
+    }
+
+    @Test
+    void indexStatsArePagedLikeTheIndexListAndAskOnlyForTheNamesOfThePage() {
+        names = List.of("logs-team-a", "logs-team-a-1", "logs-team-a-2", "logs-team-ab-1", "secret-1");
+
+        IndexStatsPage first = service.indexStats("logs-team-a", null, 2, index -> true);
+        IndexStatsPage second = service.indexStats("logs-team-a", first.lastName(), 2, index -> true);
+
+        assertThat(first.indices()).extracting(IndexStats::name).containsExactly("logs-team-a", "logs-team-a-1");
+        assertThat(first.lastName()).isEqualTo("logs-team-a-1");
+        assertThat(second.indices()).extracting(IndexStats::name).containsExactly("logs-team-a-2");
+        assertThat(second.lastName()).isNull();
+        assertThat(statted).containsExactly(List.of("logs-team-a", "logs-team-a-1"), List.of("logs-team-a-2"));
+    }
+
+    @Test
+    void indexStatsSkipWhatThePolicyRefusesAndAskNoOneForAnEmptyPage() {
+        service.indexStats("logs-team-a", null, 5, index -> !index.contains("-hr-"));
+
+        assertThat(statted).containsExactly(List.of("logs-team-a", "logs-team-a-1"));
+        assertThat(service.indexStats("nothing", null, 2, index -> true).indices()).isEmpty();
+        assertThat(statted).hasSize(1);
+    }
+
+    @Test
+    void indexStatsOfAnIndexOutsideTheScopeAreDroppedEvenIfTheBackendAnswers() {
+        names = List.of("logs-team-a", "logs-team-a-1");
+        scope = new IndexScope(List.of("logs-team-a-1"));
+
+        assertThat(service.indexStats("logs-team-a", null, 5, index -> true).indices())
+                .extracting(IndexStats::name).containsExactly("logs-team-a-1");
     }
 
     @Test

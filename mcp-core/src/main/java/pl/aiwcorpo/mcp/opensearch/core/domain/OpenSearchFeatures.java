@@ -17,12 +17,13 @@ public final class OpenSearchFeatures {
     public static final String LIST_INDICES = "list_indices";
     public static final String VALIDATE_QUERY = "validate_query";
     public static final String CLUSTER_HEALTH = "cluster_health";
+    public static final String INDEX_STATS = "index_stats";
 
     /** Works wherever a search endpoint compatible with Elasticsearch 7.10 answers. */
     public static final Set<String> BASELINE = Set.of(SEARCH, COUNT, DOCUMENT, MAPPING, SEARCH_AFTER);
     /** Verified against fixtures of OpenSearch 2.19 and 3.x. */
     public static final Set<String> TESTED = Set.of(SEARCH, COUNT, DOCUMENT, MAPPING, SEARCH_AFTER, LIST_INDICES,
-            VALIDATE_QUERY, CLUSTER_HEALTH);
+            VALIDATE_QUERY, CLUSTER_HEALTH, INDEX_STATS);
 
     /** Name of the probe and key in {@code BackendCapabilities}. */
     public static final String PROBE = "opensearch";

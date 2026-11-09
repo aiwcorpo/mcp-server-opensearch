@@ -228,6 +228,8 @@ final class StubBackend {
             resolve(exchange, path.substring("/_resolve/index/".length()));
         } else if (path.startsWith("/_cat/indices/")) {
             catIndices(exchange, path.substring("/_cat/indices/".length()));
+        } else if (path.contains("/_stats/")) {
+            indexStats(exchange, path.substring(1, path.indexOf("/_stats/")));
         } else if ("/_cluster/health".equals(path)) {
             respond(exchange, 200, fixture("cluster-health.json"));
         } else if (path.endsWith("/_mapping") && "GET".equals(exchange.getRequestMethod())) {
@@ -345,6 +347,27 @@ final class StubBackend {
             }
         }
         respond(exchange, 200, "[" + String.join(",", rows) + "]");
+    }
+
+    /** Numbers per index as {@code _stats} gives them: documents of the primaries, bytes of all shards, operations since start. */
+    private static final Map<String, long[]> STATS = Map.of(
+            "logs-team-a-2026.10.26", new long[] {184203, 73400320, 184500, 912},
+            "logs-team-a-2026.10.27", new long[] {91877, 31457280, 92001, 457});
+
+    private void indexStats(HttpExchange exchange, String expression) throws IOException {
+        List<String> entries = new ArrayList<>();
+        for (String index : expression.split(",")) {
+            long[] n = STATS.get(index);
+            if (n != null) {
+                entries.add("\"" + index + "\":{\"uuid\":\"u-" + index + "\",\"primaries\":{\"docs\":{\"count\":" + n[0]
+                        + ",\"deleted\":0},\"store\":{\"size_in_bytes\":" + (n[1] / 2) + "},\"indexing\":{\"index_total\":" + n[2]
+                        + "},\"search\":{\"query_total\":" + (n[3] / 2) + "}},\"total\":{\"docs\":{\"count\":" + (n[0] * 2)
+                        + "},\"store\":{\"size_in_bytes\":" + n[1] + "},\"indexing\":{\"index_total\":" + (n[2] * 2)
+                        + "},\"search\":{\"query_total\":" + n[3] + "}}}");
+            }
+        }
+        respond(exchange, 200, "{\"_shards\":{\"total\":4,\"successful\":4,\"failed\":0},\"_all\":{},\"indices\":{"
+                + String.join(",", entries) + "}}");
     }
 
     private void mapping(HttpExchange exchange, String index) throws IOException {

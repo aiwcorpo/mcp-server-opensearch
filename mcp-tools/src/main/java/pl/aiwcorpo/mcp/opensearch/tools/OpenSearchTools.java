@@ -19,6 +19,9 @@ import pl.aiwcorpo.mcp.opensearch.core.domain.BackendUnavailableFeatureException
 import pl.aiwcorpo.mcp.opensearch.core.domain.ClusterHealth;
 import pl.aiwcorpo.mcp.opensearch.core.domain.IndexMapping;
 import pl.aiwcorpo.mcp.opensearch.core.domain.IndexPage;
+import pl.aiwcorpo.mcp.opensearch.core.domain.IndexStatsPage;
+import pl.aiwcorpo.mcp.opensearch.core.domain.LogField;
+import pl.aiwcorpo.mcp.opensearch.core.domain.LogPatterns;
 import pl.aiwcorpo.mcp.opensearch.core.domain.LogCount;
 import pl.aiwcorpo.mcp.opensearch.core.domain.LogHit;
 import pl.aiwcorpo.mcp.opensearch.core.domain.LogPage;
@@ -47,6 +50,7 @@ import pl.aiwcorpo.mcp.platform.resource.ResourceContext;
 import pl.aiwcorpo.mcp.platform.resource.ResourcePolicy;
 import pl.aiwcorpo.mcp.platform.resource.ResourceRef;
 import pl.aiwcorpo.mcp.platform.text.TextHygiene;
+import pl.aiwcorpo.mcp.platform.text.UntrustedText;
 
 /**
  * The MCP tools of this server. Every argument is untrusted input from a model. Parameter names are the public
@@ -72,6 +76,8 @@ public class OpenSearchTools {
     public static final String GET_DOCUMENT = "get_document";
     public static final String COUNT_LOGS = "count_logs";
     public static final String LIST_INDICES = "list_indices";
+    public static final String GET_INDEX_STATS = "get_index_stats";
+    public static final String FIND_LOG_PATTERNS = "find_log_patterns";
     public static final String GET_INDEX_MAPPING = "get_index_mapping";
     public static final String VALIDATE_QUERY = "validate_query";
     public static final String GET_CLUSTER_HEALTH = "get_cluster_health";
@@ -110,10 +116,17 @@ public class OpenSearchTools {
     private static final int MAX_READS = 5;
     private static final int DEFAULT_INDEX_PAGE = 25;
     private static final int MAX_INDEX_PAGE = 50;
+    private static final int DEFAULT_PATTERNS = 10;
+    private static final int MAX_PATTERNS = 50;
+    private static final int DEFAULT_SAMPLE = 200;
+    private static final int MAX_SAMPLE = 500;
+    /** Messages one backend page of {@code find_log_patterns} carries; {@link #MAX_SAMPLE} takes five of them. */
+    private static final int SAMPLE_PAGE = 100;
 
     private final OpenSearchUseCase useCase;
     private final Duration maxRange;
     private final Duration callBudget;
+    private final String messageField;
     private final ResourcePolicy policy;
     private final OpenSearchIndexResolver indices;
     private final CursorCodec cursors;
@@ -124,6 +137,7 @@ public class OpenSearchTools {
         this.useCase = useCase;
         this.maxRange = limits.maxRange();
         this.callBudget = limits.callBudget();
+        this.messageField = limits.messageField();
         this.policy = policy;
         this.indices = indices;
         this.cursors = cursors;
@@ -328,6 +342,111 @@ public class OpenSearchTools {
         return PagedResult.of(views, next);
     }
 
+    @Tool(name = GET_INDEX_STATS, description = "Returns statistics of the indices of one index prefix that the caller may"
+            + " read, by name: document count, store size in bytes, indexing operations and search queries since the"
+            + " shards started. The numbers are index statistics: they count all documents of the index, also those"
+            + " that document level security hides from the caller. A prefix equal to a full index name also covers"
+            + " that index's dash children. Pass nextCursor from the previous result for the next page.")
+    @ToolRisk(RiskLevel.READ_ONLY)
+    @ToolTitle("Get index statistics")
+    public PagedResult<IndexStatsView> getIndexStats(
+            @ToolParam(description = "Index prefix p: covers the index named p and every index named p-..., no wildcard")
+            @ArgumentLimits(pattern = OpenSearchResourceModel.INDEX_PREFIX_REGEX, minLength = 1, maxLength = 255) String index_prefix,
+            @ToolParam(description = "Number of indices, 1-50, default 25", required = false)
+            @ArgumentLimits(minimum = 1, maximum = MAX_INDEX_PAGE) Integer size,
+            @ToolParam(description = "nextCursor of the previous page of the same query", required = false)
+            @ArgumentLimits(maxLength = CursorCodec.MAX_CURSOR_LENGTH, pattern = CursorCodec.ARGUMENT_PATTERN) String cursor) {
+        requireFeature(OpenSearchFeatures.INDEX_STATS);
+        String prefix = validPrefix(index_prefix);
+        int limit = size == null ? DEFAULT_INDEX_PAGE : size;
+        if (limit < 1 || limit > MAX_INDEX_PAGE) {
+            throw new InvalidToolArgumentException("size must be between 1 and " + MAX_INDEX_PAGE);
+        }
+        String query = CursorCodec.fingerprint(GET_INDEX_STATS, prefix, Integer.toString(limit));
+        String after = cursor == null ? null : validIndexName(cursors.open(cursor, GET_INDEX_STATS, query));
+        IndexStatsPage page = useCase.indexStats(prefix, after, limit, index -> policy.allows(indices.resource(index)));
+        List<IndexStatsView> views = page.indices().stream()
+                .map(row -> new IndexStatsView(row.name(), row.docsCount(), row.storeSizeBytes(), row.indexingTotal(),
+                        row.searchQueryTotal())).toList();
+        String next = page.lastName() == null ? null : cursors.issue(GET_INDEX_STATS, query, page.lastName());
+        return PagedResult.of(views, next);
+    }
+
+    /**
+     * The sample is read the way {@code search_logs} reads: same query, same scope, hits of indices the policy refuses
+     * dropped. The grouping needs no backend support, so no plugin is required. Nothing in the result names an index.
+     */
+    @Tool(name = FIND_LOG_PATTERNS, description = "Groups the log messages of one index prefix within a time range into"
+            + " patterns: numbers, hexadecimal ids, UUIDs, IP addresses and timestamps are replaced by placeholders and"
+            + " equal results are counted. Works on a sample of the newest matching messages (sample_size, up to 500),"
+            + " not on all of them, and says so in the result. Returns up to size patterns, the most frequent first,"
+            + " each with its count within the sample and one example message, plus the number of messages read and"
+            + " the patterns left out. The optional text, level and service narrow the messages as in search_logs.")
+    @ToolRisk(RiskLevel.READ_ONLY)
+    @ToolTitle("Find log patterns")
+    public LogPatternsResult findLogPatterns(
+            @ToolParam(description = "Index prefix p: covers the index named p and every index named p-..., no wildcard")
+            @ArgumentLimits(pattern = OpenSearchResourceModel.INDEX_PREFIX_REGEX, minLength = 1, maxLength = 255) String index_prefix,
+            @ToolParam(description = "Words that must all occur in the log message", required = false)
+            @ArgumentLimits(minLength = 1, maxLength = MAX_QUERY) String text,
+            @ToolParam(description = "Log level, upper case: TRACE, DEBUG, INFO, WARN, ERROR or FATAL", required = false)
+            @ArgumentLimits(minLength = 4, maxLength = 5, pattern = LEVEL_REGEX) String level,
+            @ToolParam(description = "Exact service name", required = false)
+            @ArgumentLimits(minLength = 1, maxLength = 64, pattern = SERVICE_REGEX) String service,
+            @ToolParam(description = "Start of the time range, inclusive, ISO-8601 with offset, e.g. 2026-10-27T08:00:00Z")
+            @ArgumentLimits(minLength = 20, maxLength = MAX_TIME) String from,
+            @ToolParam(description = "End of the time range, exclusive, ISO-8601 with offset, later than from")
+            @ArgumentLimits(minLength = 20, maxLength = MAX_TIME) String to,
+            @ToolParam(description = "Number of patterns, 1-50, default 10", required = false)
+            @ArgumentLimits(minimum = 1, maximum = MAX_PATTERNS) Integer size,
+            @ToolParam(description = "Number of messages to read for the sample, 1-500, default 200", required = false)
+            @ArgumentLimits(minimum = 1, maximum = MAX_SAMPLE) Integer sample_size) {
+        requireFeature(OpenSearchFeatures.SEARCH);
+        LogQuery base = optionalTextQuery(index_prefix, text, level, service, from, to);
+        int patterns = size == null ? DEFAULT_PATTERNS : size;
+        if (patterns < 1 || patterns > MAX_PATTERNS) {
+            throw new InvalidToolArgumentException("size must be between 1 and " + MAX_PATTERNS);
+        }
+        int wanted = sample_size == null ? DEFAULT_SAMPLE : sample_size;
+        if (wanted < 1 || wanted > MAX_SAMPLE) {
+            throw new InvalidToolArgumentException("sample_size must be between 1 and " + MAX_SAMPLE);
+        }
+        Predicate<String> readable = index -> policy.allows(indices.resource(index));
+        List<String> messages = new ArrayList<>();
+        SearchAfter position = null;
+        long began = System.nanoTime();
+        for (int reads = 1; reads <= MAX_SAMPLE / SAMPLE_PAGE && messages.size() < wanted; reads++) {
+            if (reads > 1 && System.nanoTime() - began > callBudget.toNanos()) {
+                break;
+            }
+            int pageSize = Math.min(SAMPLE_PAGE, wanted - messages.size());
+            LogPage page = useCase.searchLogs(
+                    new LogQuery(base.prefix(), base.filter(), base.from(), base.to(), pageSize, position), readable);
+            for (LogHit hit : page.hits()) {
+                if (messages.size() < wanted && readable.test(hit.index())) {
+                    messageOf(hit).ifPresent(messages::add);
+                }
+            }
+            position = page.next();
+            if (position == null) {
+                break;
+            }
+        }
+        LogPatterns.Summary summary = LogPatterns.summarize(messages, patterns);
+        List<LogPatternsResult.PatternView> views = summary.groups().stream()
+                .map(group -> new LogPatternsResult.PatternView(
+                        UntrustedText.plain(group.pattern(), LogPatterns.MAX_TEXT), group.count(),
+                        UntrustedText.plain(group.example(), LogPatterns.MAX_TEXT)))
+                .toList();
+        return new LogPatternsResult(base.prefix(), base.from().toString(), base.to().toString(), true, messages.size(),
+                wanted, views, summary.others(), summary.otherMessages(), LogPatternsResult.NOTE);
+    }
+
+    private java.util.Optional<String> messageOf(LogHit hit) {
+        return hit.data().stream().filter(field -> field.path() == null && field.name().equals(messageField))
+                .map(LogField::value).map(UntrustedText::text).findFirst();
+    }
+
     @Tool(name = GET_INDEX_MAPPING, description = "Returns the fields of one index that this server queries, returns"
             + " or sorts by, with their mapping type, nested fields as dotted paths. Other fields of the index are not listed.")
     @ToolRisk(RiskLevel.READ_ONLY)
@@ -368,8 +487,8 @@ public class OpenSearchTools {
         return new QueryCheckResult(check.valid(), check.checked(), check.invalidIndices(), check.explanation());
     }
 
-    @Tool(name = GET_CLUSTER_HEALTH, description = "Returns the health of the whole cluster: status, number of nodes"
-            + " and shard counts. No names of the cluster, nodes or indices.")
+    @Tool(name = GET_CLUSTER_HEALTH, description = "Returns the health of the whole cluster: status, number of nodes,"
+            + " shard counts and the number of pending cluster tasks. No names of the cluster, nodes or indices.")
     @ToolRisk(value = RiskLevel.READ_ONLY, additionalGroup = OPS_GROUP)
     @ToolTitle("Get cluster health")
     public ClusterHealthResult getClusterHealth() {
@@ -377,7 +496,7 @@ public class OpenSearchTools {
         ClusterHealth health = useCase.clusterHealth();
         return new ClusterHealthResult(health.status(), health.timedOut(), health.nodes(), health.activeShards(),
                 health.relocatingShards(), health.initializingShards(), health.unassignedShards(),
-                health.activeShardsPercent());
+                health.pendingTasks(), health.activeShardsPercent());
     }
 
     @Tool(name = GET_BACKEND_INFO, description = "Returns what this server knows about the OpenSearch behind it: the"

@@ -94,7 +94,7 @@ class ManifestTest extends ServerTestSupport {
         JsonNode manifest = manifest();
         List<JsonNode> listed = listedTools();
 
-        assertThat(listed).hasSameSizeAs(manifest.get("tools")).hasSize(9);
+        assertThat(listed).hasSameSizeAs(manifest.get("tools")).hasSize(11);
         for (JsonNode tool : manifest.get("tools")) {
             String name = tool.get("name").asString();
             JsonNode published = listed.stream().filter(t -> t.get("name").asString().equals(name)).findFirst().orElseThrow();
