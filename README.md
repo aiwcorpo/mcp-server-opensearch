@@ -47,7 +47,7 @@ Eleven tools, all `READ_ONLY` with action `read`. The client sees them as `opens
 | `count_logs` | Counts documents that match a filter |
 | `get_document` | Returns one document by index and id |
 | `list_indices` | Lists indices of a prefix with their health (no document counts or sizes) |
-| `get_index_stats` | Document count, store size and indexing and search totals of the indices of a prefix, paged (index statistics ignore DLS: they count documents the caller may not read) |
+| `get_index_stats` | Document count, store size and indexing and search totals of the indices of a prefix, paged; needs the ops group because the numbers ignore DLS and count documents the caller may not read |
 | `get_index_mapping` | Returns the fields of one index that this server uses, with types |
 | `validate_query` | Asks OpenSearch whether it accepts the query the server would build |
 | `find_log_patterns` | Groups the messages of a capped sample (up to 500, newest first) into patterns with counts and one example each; numbers, hex ids, UUIDs, IPs and timestamps are masked in the server, no plugin needed |
@@ -57,7 +57,7 @@ Eleven tools, all `READ_ONLY` with action `read`. The client sees them as `opens
 Risk, action and the group a call requires for every tool are in the generated
 [tool reference](https://github.com/aiwcorpo/mcp-docs/blob/main/docs/reference/tools.md)
 (`docs/reference/tools.md` in `mcp-docs`). The tools that read logs and indices need the group `mcp-opensearch-read`;
-`get_cluster_health` and `get_backend_info` describe the whole cluster and need `mcp-opensearch-ops` as well
+`get_cluster_health` and `get_backend_info` describe the whole cluster, and `get_index_stats` returns numbers that ignore DLS; all three need `mcp-opensearch-ops` as well
 (`@ToolRisk(additionalGroup = ...)`, in the manifest as `additionalGroup`). Tools that work on indices also need at least one group that the
 administrator mapped to an index prefix in the scope mapping (for example `mcp-opensearch-idx-logs-team-a` to
 `OpenSearch::Index/logs-team-a`).

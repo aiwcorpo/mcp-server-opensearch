@@ -236,13 +236,28 @@ class ExtendedToolsTest extends ServerTestSupport {
     }
 
     @Test
+    void indexStatsNeedTheOpsGroupNextToTheReadGroup() {
+        Map<String, Object> arguments = Map.of("index_prefix", "logs-team-a");
+        try (McpSyncClient readOnly = clientInGroups(PAT, READ_GROUP, GRANT_TEAM_A)) {
+            McpSchema.CallToolResult result = call(readOnly, "get_index_stats", arguments);
+
+            assertThat(result.isError()).isTrue();
+            assertThat(text(result)).contains("\"error\":\"access_denied\"");
+        }
+        try (McpSyncClient both = clientInGroups(PAT, READ_GROUP, OPS_GROUP, GRANT_TEAM_A)) {
+            assertThat(call(both, "get_index_stats", arguments).isError()).isFalse();
+        }
+        assertThat(BACKEND.requests().stream().filter(r -> r.path().contains("/_stats/"))).as("only the call with the ops group reached OpenSearch").hasSize(1);
+    }
+
+    @Test
     void indexStatsNeverReachBeyondTheScopeOrThePolicy() {
-        try (McpSyncClient client = clientInGroups(PAT, READ_GROUP, GRANT_TEAM_A)) {
+        try (McpSyncClient client = clientInGroups(PAT, READ_GROUP, OPS_GROUP, GRANT_TEAM_A)) {
             assertThat(text(call(client, "get_index_stats", Map.of("index_prefix", "logs-team-b")))).contains("\"items\":[]");
             assertThat(text(call(client, "get_index_stats", Map.of("index_prefix", "logs-team-a-hr")))).contains("\"items\":[]");
             assertThat(text(call(client, "get_index_stats", Map.of("index_prefix", "logs-team-a")))).doesNotContain("logs-team-b", "hr-1");
         }
-        try (McpSyncClient client = clientInGroups(PAT, READ_GROUP)) {
+        try (McpSyncClient client = clientInGroups(PAT, READ_GROUP, OPS_GROUP)) {
             assertThat(text(call(client, "get_index_stats", Map.of("index_prefix", "logs-team-a")))).contains("\"items\":[]");
         }
         assertThat(BACKEND.requests().stream().filter(r -> r.path().contains("/_stats/")).map(StubBackend.Request::decodedPath))

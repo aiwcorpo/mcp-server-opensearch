@@ -85,7 +85,8 @@ public class OpenSearchTools {
 
     /**
      * The two tools that name no index describe the whole cluster (shard counts, exact version), so no index scope
-     * applies to them: the read group is not enough, the caller also needs this one.
+     * applies to them: the read group is not enough, the caller also needs this one. {@code get_index_stats} needs it
+     * too, because index statistics ignore document level security.
      */
     public static final String OPS_GROUP = "mcp-opensearch-ops";
 
@@ -344,10 +345,11 @@ public class OpenSearchTools {
 
     @Tool(name = GET_INDEX_STATS, description = "Returns statistics of the indices of one index prefix that the caller may"
             + " read, by name: document count, store size in bytes, indexing operations and search queries since the"
-            + " shards started. The numbers are index statistics: they count all documents of the index, also those"
-            + " that document level security hides from the caller. A prefix equal to a full index name also covers"
+            + " shards started. Needs the ops group (mcp-opensearch-ops) next to the read group: the numbers are index"
+            + " statistics and count all documents of the index, also those that document level security hides from"
+            + " the caller. A prefix equal to a full index name also covers"
             + " that index's dash children. Pass nextCursor from the previous result for the next page.")
-    @ToolRisk(RiskLevel.READ_ONLY)
+    @ToolRisk(value = RiskLevel.READ_ONLY, additionalGroup = OPS_GROUP)
     @ToolTitle("Get index statistics")
     public PagedResult<IndexStatsView> getIndexStats(
             @ToolParam(description = "Index prefix p: covers the index named p and every index named p-..., no wildcard")

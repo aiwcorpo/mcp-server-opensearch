@@ -33,7 +33,7 @@ Major release: the policies of the server live in this repository. Built on `mcp
   gateway certificate). The server connects to the gateway for the policy data with its own certificate, which now needs the usage
   `clientAuth` next to `serverAuth` (CN `mcp-opensearch`, SAN `mcp-opensearch.internal`).
 - New tools: `get_index_stats` (document count, store size, indexing and search totals per index of a prefix, from `_stats`, same prefix
-  authorization and paging as `list_indices`; the numbers ignore document level security) and `find_log_patterns` (groups a capped sample of
+  authorization and paging as `list_indices`; the numbers ignore document level security, so the tool keeps the ops group as `additionalGroup` like `get_cluster_health`) and `find_log_patterns` (groups a capped sample of
   up to 500 messages, read with the query of `search_logs`, into patterns with counts and one example; numbers, hex ids, UUIDs, IPs and
   timestamps are masked in the server). `get_cluster_health` also returns `pendingTasks`. Feature `index_stats` joins the tested set.
 - `deploy/` has `compose.yaml`, `mcp-opensearch.env` and `certs/` next to the systemd files, and the procedure that adds the system
