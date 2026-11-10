@@ -1,17 +1,47 @@
 # mcp-opensearch
 
-MCP server for OpenSearch, one of the native servers of the aiwcorpo MCP platform. It lets an MCP client search logs, count
-and aggregate them, and inspect indices of a self-managed OpenSearch cluster that uses the Security plugin. The server only
-reads: no tool changes data or cluster settings, and no tool accepts a query, an API path, SQL or PPL from the model. The
-server builds every request itself from values the model supplies (text, level, service, time range, index prefix).
+MCP server for a self-managed OpenSearch cluster. AI clients such as Claude Code reach it through the gateway of the aiwcorpo MCP
+platform to search and count logs and inspect indices; the server calls OpenSearch with each user's own token.
 
-It is built on `mcp-platform-starter` 4.0.0 (Java 25, Spring Boot 4.1.0, Spring AI 2.0.0, `mcp-contracts` 7.0.0) and
-runs only behind the platform gateway. The gateway connects to its address and pulls its manifest; it accepts only calls with the gateway's internal JWT and answers 401 without it;
-there is no anonymous mode. Calls to OpenSearch carry the calling user's own credential (a token the credential broker
-exchanges for OpenSearch), so OpenSearch Security roles, DLS and FLS still apply.
+The server only reads. No tool changes data or settings, and no tool accepts a query, an API path, SQL or PPL: the server builds
+every request itself from the values the client passes (text, level, service, time range, index prefix).
 
-Platform documentation (gateway, policies, portal, operation) lives in
-[aiwcorpo/mcp-docs](https://github.com/aiwcorpo/mcp-docs). This README covers only what belongs to this server.
+## Quick start
+
+```bash
+cd deploy
+# fill in MCP_GATEWAY_JWKS_URI, MCP_CONNECT_URL, MCP_OPENSEARCH_URL and MCP_OPENSEARCH_INDEX_PREFIXES in mcp-opensearch.env
+docker compose up -d
+docker compose logs mcp-opensearch | grep event=tls_certificate
+```
+
+Then the platform operator adds `https://<this host>:8443/mcp` in the portal. Full steps: [deploy/README.md](deploy/README.md).
+
+## Tools
+
+11 tools, shown to a client as `opensearch__<name>`. All are read-only. They need the group `mcp-opensearch-read` and at least one
+group that the operator mapped to an index prefix. The tools marked "ops" need the group `mcp-opensearch-ops` as well.
+
+| Area | Tool | What it does |
+| --- | --- | --- |
+| Logs | `search_logs` | Searches the logs of an index prefix in a time range; pages with `cursor` |
+| | `count_logs` | Counts documents that match a filter |
+| | `aggregate_logs` | Counts documents by `level`, `service` or `host` |
+| | `find_log_patterns` | Groups the messages of a sample (up to 500, newest first) into patterns with counts and one example each |
+| | `get_document` | Returns one document by index and id |
+| Indices | `list_indices` | Lists the indices of a prefix with their health |
+| | `get_index_mapping` | Returns the fields of one index that the server uses, with types |
+| | `validate_query` | Asks OpenSearch whether it accepts the query the server would build |
+| | `get_index_stats` (ops) | Document count, store size and indexing and search totals per index; the numbers ignore DLS, hence the ops group |
+| Cluster | `get_cluster_health` (ops) | Status, node and shard counts, pending tasks |
+| | `get_backend_info` (ops) | Version and features found by the version probe; does not call OpenSearch |
+
+An index prefix `p` covers the index `p` and the indices `p-...`, never `p...` without the dash. Aliases and data streams are not
+supported: a cluster that keeps logs in data streams returns empty results. Text from OpenSearch reaches the model as untrusted
+text, never as instructions.
+
+`search_logs` pages only when `MCP_OPENSEARCH_TIEBREAKER_FIELD` names a field with a unique value in every document (not `_id`).
+Without it the tool returns the first page.
 
 ## Supported OpenSearch versions
 
@@ -22,164 +52,53 @@ Platform documentation (gateway, policies, portal, operation) lives in
 | OpenSearch 1.x, Elasticsearch 7.10 and forks without `version.distribution: opensearch`, AWS OpenSearch Serverless | `degraded` | `search_logs`, `aggregate_logs`, `count_logs`, `get_document`, `get_index_mapping`; the others answer `upstream_unavailable` |
 | OpenSearch 4.x and later | `degraded` until tested | as above |
 
-At startup and every 5 minutes the server calls `GET /` anonymously and reads `version.number` and `version.distribution`.
-The state shows in the log, in the `mcp_backend_capability{probe,state}` metric, in `/actuator/health` and in the
-`get_backend_info` tool. Until the first probe answer, and when the probe cannot read a version at all, the state is
-`unavailable` and every tool that calls OpenSearch answers `upstream_unavailable`.
-
-A cluster with the Security plugin usually answers the anonymous `GET /` with 401. The server holds no credential of its own,
-so the state is `degraded` and `list_indices`, `validate_query` and `get_cluster_health` refuse. If you know the cluster is
-OpenSearch 2.x or 3.x, set `MCP_OPENSEARCH_ASSUME_TESTED_VERSION=true`: on a 401 or 403 the probe then reports `supported` with
-version `unknown`. The flag records your claim and verifies nothing, so check the version yourself. A response that names
-another distribution stays `degraded`.
-
-The test fixtures in `mcp-app/src/test/resources/opensearch-fixtures/` follow the documented response shapes of 2.19 and 3.x. They
-were not recorded from a live cluster.
-
-## Tools
-
-Eleven tools, all `READ_ONLY` with action `read`. The client sees them as `opensearch__<tool>`.
-
-| Tool | What it does |
-| --- | --- |
-| `search_logs` | Searches the logs of an index prefix in a time range; pages through `cursor` |
-| `aggregate_logs` | Counts documents by `level`, `service` or `host` |
-| `count_logs` | Counts documents that match a filter |
-| `get_document` | Returns one document by index and id |
-| `list_indices` | Lists indices of a prefix with their health (no document counts or sizes) |
-| `get_index_stats` | Document count, store size and indexing and search totals of the indices of a prefix, paged; needs the ops group because the numbers ignore DLS and count documents the caller may not read |
-| `get_index_mapping` | Returns the fields of one index that this server uses, with types |
-| `validate_query` | Asks OpenSearch whether it accepts the query the server would build |
-| `find_log_patterns` | Groups the messages of a capped sample (up to 500, newest first) into patterns with counts and one example each; numbers, hex ids, UUIDs, IPs and timestamps are masked in the server, no plugin needed |
-| `get_cluster_health` | Cluster status, node and shard counts and pending tasks |
-| `get_backend_info` | Version and features from the probe; does not call OpenSearch |
-
-Risk, action and the group a call requires for every tool are in the generated
-[tool reference](https://github.com/aiwcorpo/mcp-docs/blob/main/docs/reference/tools.md)
-(`docs/reference/tools.md` in `mcp-docs`). The tools that read logs and indices need the group `mcp-opensearch-read`;
-`get_cluster_health` and `get_backend_info` describe the whole cluster, and `get_index_stats` returns numbers that ignore DLS; all three need `mcp-opensearch-ops` as well
-(`@ToolRisk(additionalGroup = ...)`, in the manifest as `additionalGroup`). Tools that work on indices also need at least one group that the
-administrator mapped to an index prefix in the scope mapping (for example `mcp-opensearch-idx-logs-team-a` to
-`OpenSearch::Index/logs-team-a`).
-
-Behaviour worth knowing before you deploy:
-
-- An index prefix `p` covers the index `p` and indices `p-...`, never `p...` without the dash. The server resolves the prefix
-  against the indices that exist and are in the caller's scope, and sends only concrete index names to `_search`.
-- Aliases and data streams are not supported. A cluster that keeps logs in data streams returns empty results.
-- A time range removes indices named `p-YYYY.MM.DD` or `p-YYYY.MM` whose date falls outside the range plus one day. Logs that
-  arrive more than a day late into such an index can be missed by `count_logs` and `aggregate_logs`.
-- `search_logs` pages with `search_after`. This needs `MCP_OPENSEARCH_TIEBREAKER_FIELD`, a field with a unique value in every
-  document (not `_id`). Without it the tool returns the first page only.
-- Cursors are encrypted and bound to the user, the tool and the query. Several instances need the same `MCP_PAGING_CURSOR_KEY`; one instance keeps its own in the state directory.
-- Values from OpenSearch (field names and contents) reach the model as `UntrustedText`, never as instructions.
-
-## Policies
-
-The Cedar policies of OpenSearch live here, in `mcp-app/src/main/resources/mcp/policies/`, and are part of the jar and of the manifest:
-
-| File | Content |
-| --- | --- |
-| `schema.cedarschema` | namespace `OpenSearch`: `OpenSearch::Index` (with the classification attribute `tags`), actions `read`, `update`, `delete`, `admin` |
-| `resource-types.json` | the declaration of the type: `idPattern` (an index name), `scopePattern` (a grantable prefix) and the classification |
-| `read.cedar` | reading needs `mcp-opensearch-read` and a scope that covers the index |
-| `update.cedar` | rules for `update` and `delete` inside a granted prefix; no current tool uses them |
-
-What is not written here is generated by the platform: the group a tool needs, the closed `restricted` indices (an index with the
-tag `restricted` from `opensearch.scope.index-tags`) and the limits of the service account. Who holds which prefix is administrator
-data in the gateway (the scope mapping), not part of this repository. The resolver gives an index the scope of every dash prefix of
-its name that can be granted (`logs-team-a-2026.10` lies in `logs`, `logs-team`, `logs-team-a` and itself), so a grant of
-`logs-team-a` reaches it and one of `logs-team-ab` does not; `QueryScope` builds the index expression from the same grants.
-`OpenSearchPolicyDecisionsTest` states the decisions with `PolicyDecisions`; a change to any file here changes `policiesHash` in the
-manifest, and an administrator has to approve it before the server decides anything.
-
-## Running against a real cluster
-
-`.run/` has two IntelliJ configurations. Start `LocalGateway` (the gateway of `mcp-platform-test` on `http://127.0.0.1:18500/mcp`,
-serving the JWKS on port 18445 and pushing the policy data to the server with the policies of this working tree and the mapping in
-`.run/scope-mapping.json`), then `McpOpenSearch (dev, behind LocalGateway)` with `MCP_OPENSEARCH_URL` and
-`MCP_OPENSEARCH_INDEX_PREFIXES` set. Connect an MCP client to the gateway with `Authorization: Bearer <your token>`. Edit
-`.run/scope-mapping.json` and the `--groups` of the `LocalGateway` configuration for your prefixes, and restart `LocalGateway`
-after a change to the policies (it approves the hash of the files it read). The configurations need the `4.0.0` artifacts in
-`~/.m2` (`./mvnw verify` of the starter).
-
-## Build and test
-
-```bash
-export JAVA_HOME="$(/usr/libexec/java_home -v 25)"   # macOS; on Linux the JDK 25 directory
-./mvnw verify        # jar: mcp-app/target/mcp-opensearch.jar and mcp-app/target/mcp-manifest.json
-```
-
-Tests need no Docker and no platform environment. `TestGateway` from `mcp-platform-test` signs internal JWTs, and `StubBackend`
-imitates the OpenSearch REST API, including aliases, data streams, hidden indices and broken responses. It is not a real cluster.
-
-Platform artifacts (`mcp-platform-bom`, contracts) come from Maven Central or from `~/.m2`;
-the setup is described in the README of `mcp-starter-lib`. Linux and macOS with bash 3.2 or newer; Windows only through WSL2. The GitHub, GitLab and Jenkins files run `./mvnw -B verify`.
-
-The build writes `mcp-app/target/mcp-manifest.json`. That file is the document the running server serves at `/.well-known/mcp-manifest` for the gateway to pull, kept as an artifact so that a reviewer can read what a commit
-publishes. Any change to a tool changes its `definitionHash` and needs a new approval in the gateway.
-
-Modules: `mcp-core` (domain and ports), `mcp-application` (use cases), `mcp-integration` (OpenSearch adapter, version probe),
-`mcp-tools` (MCP tools), `mcp-app` (bootstrap, the single jar, end-to-end tests).
+At startup and every 5 minutes the server calls `GET /` without a credential and reads the version. A cluster with the Security
+plugin usually answers 401, so the state is `degraded`. If the cluster is OpenSearch 2.x or 3.x, set
+`MCP_OPENSEARCH_ASSUME_TESTED_VERSION=true`; the server then reports `supported` with version `unknown` and verifies nothing.
+The state shows in the log, in `/actuator/health` and in `get_backend_info`.
 
 ## Configuration
 
-`application.yml` is the production configuration: TLS on the server port, the JWKS of the gateway, `jti` in memory, `https` to
-OpenSearch. The server does not start without these:
+Required, in `deploy/mcp-opensearch.env`:
 
-| Variable | Meaning |
+| Variable | Description |
 | --- | --- |
-| `MCP_GATEWAY_JWKS_URI` | public key set of the gateway's internal JWT: `https://<domain of the platform>/.well-known/mcp-jwks.json` |
-| `MCP_CONNECT_URL` | Portal page for connecting an account, with `{system}`; sent in `credential_required` |
-| `MCP_OPENSEARCH_URL` | REST address of OpenSearch (`https` outside the `dev` profile) |
-| `MCP_OPENSEARCH_INDEX_PREFIXES` | Upper bound of index prefixes, comma-separated; a grant outside this list gives nothing |
+| `MCP_GATEWAY_JWKS_URI` | key set of the gateway: `https://<platform>/.well-known/mcp-jwks.json` |
+| `MCP_CONNECT_URL` | portal page where a user connects an account: `https://<platform>/connections?system={system}` |
+| `MCP_OPENSEARCH_URL` | REST address of OpenSearch, `https` |
+| `MCP_OPENSEARCH_INDEX_PREFIXES` | index prefixes the server may touch, comma-separated; a grant outside this list gives nothing |
 
-Optional settings: `MCP_OPENSEARCH_TIMESTAMP_FIELD` (`@timestamp`), `MCP_OPENSEARCH_QUERY_FIELDS` (`message`),
-`MCP_OPENSEARCH_LEVEL_FIELD`, `MCP_OPENSEARCH_SERVICE_FIELD`, `MCP_OPENSEARCH_HOST_FIELD`, `MCP_OPENSEARCH_RESULT_FIELDS`,
-`MCP_OPENSEARCH_MAX_RANGE` (`7d`), `MCP_OPENSEARCH_TIEBREAKER_FIELD`, `MCP_OPENSEARCH_TIEBREAKER_TYPE`,
-`MCP_OPENSEARCH_CALL_BUDGET` (`20s`), `MCP_OPENSEARCH_SSL_BUNDLE`, `MCP_OPENSEARCH_ASSUME_TESTED_VERSION`, `MCP_PAGING_CURSOR_KEY`,
-`MCP_TLS_CERT` and `MCP_TLS_KEY`, or `MCP_TLS_KEYSTORE` with `MCP_TLS_STORE_PASSWORD` (your own certificate; without them the server generates a
-self-signed one into `MCP_STATE_DIR`, and `MCP_PLAIN_HTTP=true` means no TLS inside the platform network), `MCP_REDIS_HOST` and the other `MCP_REDIS_*`
-(one-time `jti` in Redis instead of memory: for several instances behind a balancer, which also need the same `MCP_PAGING_CURSOR_KEY`) and `MCP_PORT` (`8443`) and `MCP_BIND`. Defaults, property names and the fixed timeouts are in the
-[server environment reference](https://github.com/aiwcorpo/mcp-docs/blob/main/docs/reference/env-servers.md)
-(`docs/reference/env-servers.md` in `mcp-docs`). The MCP endpoint is `/mcp`; without a JWT only `/actuator/health` answers.
+Optional settings:
 
-What the cluster needs: the Security plugin with JWT or OpenID Connect authentication that accepts the broker's token and maps
-the user's backend roles to OpenSearch roles. The role needs `indices:admin/resolve/index` plus the read actions of the tools
-in use (`indices:data/read/search*`, `indices:data/read/get`, `indices:admin/mappings/get`, `indices:admin/validate/query`,
-and for `list_indices`, `get_index_stats` and `get_cluster_health` the monitor actions, `indices:monitor/stats` for the statistics). Names differ between plugin releases, so confirm them on
-the first run. `do_not_fail_on_forbidden: true` in the role makes a list that includes one forbidden index return the rest.
+| Variable | Default | Description |
+| --- | --- | --- |
+| `MCP_OPENSEARCH_TIMESTAMP_FIELD` | `@timestamp` | time field of the logs |
+| `MCP_OPENSEARCH_QUERY_FIELDS` | `message` | fields searched by `search_logs` text |
+| `MCP_OPENSEARCH_LEVEL_FIELD`, `_SERVICE_FIELD`, `_HOST_FIELD` | `log.level`, `service.name`, `host.name` | fields used for filters and `aggregate_logs` |
+| `MCP_OPENSEARCH_RESULT_FIELDS` | `@timestamp,message,log.level,service.name,host.name` | fields returned for a hit |
+| `MCP_OPENSEARCH_MAX_RANGE` | `7d` | longest time range of one call |
+| `MCP_OPENSEARCH_TIEBREAKER_FIELD`, `_TIEBREAKER_TYPE` | empty, `keyword` | paging of `search_logs` |
+| `MCP_OPENSEARCH_CALL_BUDGET` | `20s` | time one `search_logs` call may spend |
+| `MCP_OPENSEARCH_SSL_BUNDLE` | empty | trust store for OpenSearch, if it needs a non-default one |
+| `MCP_OPENSEARCH_ASSUME_TESTED_VERSION` | `false` | see the versions section |
+| `MCP_PORT`, `MCP_BIND` | `8443`, `0.0.0.0` | listen address |
 
-## Install
+Own certificate (`MCP_TLS_*`), Redis and the cursor key for several instances are commented in the same file and described in
+[deploy/README.md](deploy/README.md).
 
-The server is one jar or one image. For a VM with systemd the jar `mcp-app/target/mcp-opensearch.jar` and the environment template `deploy/systemd/mcp-opensearch.env.template` are installed as in `deploy/README.md`; the [VM installation guide](https://github.com/aiwcorpo/mcp-docs/blob/main/docs/operator/install-vm.md) in `mcp-docs` has the steps. For a
-container run `docker build -t mcp-opensearch:<tag> .` after `./mvnw verify` (image `eclipse-temurin:25-jre`, user `mcp`,
-port 8443, a volume at `/var/lib/mcp/state`). Operating notes, upgrades and troubleshooting are in `mcp-docs`.
-
-## Run locally without the platform
-
-The `dev` profile must be the only active profile. It serves plain HTTP on 127.0.0.1, keeps `jti` in memory and needs no
-certificates. There is no gateway, so it only shows that the server starts and rejects requests without a JWT:
+## Build
 
 ```bash
-SPRING_PROFILES_ACTIVE=dev MCP_PORT=18541 "$JAVA_HOME/bin/java" -jar mcp-app/target/mcp-opensearch.jar
-curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:18541/actuator/health    # 200
-curl -s -o /dev/null -w '%{http_code}\n' -X POST -H 'Content-Type: application/json' \
-     -H 'Accept: application/json, text/event-stream' \
-     -d '{"jsonrpc":"2.0","id":1,"method":"ping"}' http://127.0.0.1:18541/mcp       # 401
+export JAVA_HOME=<path to JDK 25>
+./mvnw verify
 ```
 
-The `dev` profile accepts JWTs signed with the published test keys of the contracts and needs no client certificate. For that
-reason it listens on loopback only, and the starter refuses to start `dev` on another address. Never enable it on a host or in a
-container that the gateway connects to, and never put `SPRING_PROFILES_ACTIVE=dev` into an `.env` file, a systemd unit or an
-image. The local dev stack is not public yet; to run the platform use the Compose install in `mcp-docs` (`examples/compose`).
+The jar is `mcp-app/target/mcp-opensearch.jar`; `docker build -t mcp-opensearch:dev .` builds the image. Tests need neither Docker
+nor OpenSearch. Working on the code: [CONTRIBUTING.md](CONTRIBUTING.md).
 
-## Documentation
+## More
 
-The guides for developers, operators and administrators are in [`mcp-docs`](https://github.com/aiwcorpo/mcp-docs). Deployment files: `deploy/`, `Dockerfile`.
+- [deploy/README.md](deploy/README.md): installation, the OpenSearch role, troubleshooting, upgrade from 1.x
+- [CHANGELOG.md](CHANGELOG.md), [SECURITY.md](SECURITY.md)
 
-Vulnerability reports: `SECURITY.md`. Contributions: `CONTRIBUTING.md`. Changes: `CHANGELOG.md`.
-
-## License
-
-Apache-2.0, see `LICENSE`.
+Apache License 2.0.
