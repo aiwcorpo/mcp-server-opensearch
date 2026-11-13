@@ -3,8 +3,11 @@
 # yet: the repository and the organization packages do not exist at the time of writing, so the workflow is checked by
 # reading, not by a run.
 #
-# Setup, once: environment "release" with required reviewers and a deployment rule for tags v*. The platform artifacts come
-# from Maven Central, so no job needs a registry login or a token to build.
+# Setup, once: environment "release" with required reviewers, self-review prevented and a deployment rule for tags v*; a tag
+# ruleset that limits creating, updating and deleting v* tags to the release maintainers; write access to the package only
+# for this repository. A step in this file cannot bind the tag author, so these settings are the release approval;
+# CONTRIBUTING.md ("Release") lists them. The platform artifacts come from Maven Central, so no job needs a registry login
+# or a token to build.
 #
 # Three jobs. verify (contents: read) runs the tests, builds the manifest, the SBOM and the image
 # (docker save) and hands them over as one artifact; all build tools run only here. publish (packages: write) has no
