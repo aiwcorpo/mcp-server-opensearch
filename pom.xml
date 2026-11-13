@@ -51,10 +51,23 @@
         <maven.compiler.release>25</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <mcp-platform.version>4.0.0</mcp-platform.version>
+        <!-- Security fixes newer than the parent above; drop these once the starter moves to a Boot release that manages them. -->
+        <tomcat.version>11.0.27</tomcat.version>
+        <jackson-bom.version>3.1.7</jackson-bom.version>
+        <spring-framework.version>7.0.10</spring-framework.version>
+        <jackson-2-bom.version>2.21.7</jackson-2-bom.version>
+        <netty.version>4.2.19.Final</netty.version>
+        <log4j2.version>2.25.5</log4j2.version>
     </properties>
 
     <dependencyManagement>
         <dependencies>
+            <!-- Declared before the platform BOM import so this version wins over the older one that reaches the build. -->
+            <dependency>
+                <groupId>com.google.guava</groupId>
+                <artifactId>guava</artifactId>
+                <version>33.7.2-jre</version>
+            </dependency>
             <!-- Pins the starter, mcp-platform-test, mcp-contracts and Spring AI for the whole server. -->
             <dependency>
                 <groupId>pl.aiwcorpo.mcp</groupId>
