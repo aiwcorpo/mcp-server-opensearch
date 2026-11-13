@@ -90,10 +90,22 @@ jobs:
       - name: Push to ghcr.io
         run: |
           echo "$GITHUB_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
-          docker push "ghcr.io/aiwcorpo/mcp-server-opensearch:${GITHUB_REF_NAME#v}"
+          image="ghcr.io/aiwcorpo/mcp-server-opensearch:${GITHUB_REF_NAME#v}"
+          # A published version is immutable: a re-run or a moved tag must not replace the image operators already pull.
+          # Only a definite "not found" lets the push go ahead; any other error stops it.
+          if answer="$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" 2>&1)"; then
+            echo "release $GITHUB_REF_NAME exists already" >&2; exit 1
+          fi
+          case "$answer" in *"release not found"*) ;; *) echo "$answer" >&2; exit 1 ;; esac
+          if answer="$(docker manifest inspect "$image" 2>&1)"; then
+            echo "$image exists already" >&2; exit 1
+          fi
+          case "$answer" in *"no such manifest"* | *"manifest unknown"*) ;; *) echo "$answer" >&2; exit 1 ;; esac
+          docker push "$image"
         env:
           GITHUB_ACTOR: ${{ github.actor }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   release:
     needs: publish
