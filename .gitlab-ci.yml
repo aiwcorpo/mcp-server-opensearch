@@ -1,17 +1,15 @@
-# Merge request pipelines run code nobody has reviewed yet, so they get no secret and no Docker socket.
+# Merge request pipelines run code nobody has reviewed yet, so they get no secret and no Docker socket, and their Maven
+# cache is a separate key they only read: a merge request cannot plant files that the default-branch job restores.
 stages:
   - verify
 
 default:
   image: maven:3.9.12-eclipse-temurin-25@sha256:4f82a03a7d6679281952d628131299b1be88d7030a49c6a2b7d2ba2642e44e3e
-  cache:
-    key: maven
-    paths: [.m2/repository]
 
 variables:
   MAVEN_OPTS: "-Dmaven.repo.local=$CI_PROJECT_DIR/.m2/repository"
 
-verify:
+.verify:
   stage: verify
   script:
     - ./mvnw -B verify
@@ -22,6 +20,21 @@ verify:
       - mcp-app/target/mcp-manifest.json
     reports:
       junit: "**/target/surefire-reports/TEST-*.xml"
+
+verify-merge-request:
+  extends: .verify
+  cache:
+    key: maven-merge-request
+    policy: pull
+    paths: [.m2/repository]
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+
+verify:
+  extends: .verify
+  cache:
+    key: maven
+    policy: pull-push
+    paths: [.m2/repository]
+  rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
