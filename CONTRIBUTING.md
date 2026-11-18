@@ -13,7 +13,7 @@ come from Maven Central or must be in `~/.m2` (see the README of `mcp-starter-li
 ./mvnw -B verify     # the same command runs in CI
 ```
 
-A new tool follows the [tool guide](https://github.com/aiwcorpo/mcp-docs/blob/main/docs/developer/tools.md) in `mcp-docs`: closed argument schema, a resource argument or a `@ResourceRef` on every result
+A new tool follows the [tool guide](https://mcp.aiwcorpo.pl/2.0/developers/guides/server-from-template/#write-a-tool): closed argument schema, a resource argument or a `@ResourceRef` on every result
 element that names an index, no query language from the model, a test for each refusal, and a row in the tools table of the README.
 
 ## Policies
