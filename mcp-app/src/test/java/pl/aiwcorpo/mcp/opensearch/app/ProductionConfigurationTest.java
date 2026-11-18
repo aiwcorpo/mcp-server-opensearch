@@ -5,8 +5,10 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.IOException;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import org.apache.catalina.util.ServerInfo;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.support.DefaultListableBeanFactory;
 import org.springframework.boot.env.YamlPropertySourceLoader;
@@ -17,6 +19,8 @@ import org.springframework.mock.env.MockEnvironment;
 import pl.aiwcorpo.mcp.opensearch.integration.OpenSearchAdapter;
 import pl.aiwcorpo.mcp.opensearch.integration.OpenSearchBackendProperties;
 import pl.aiwcorpo.mcp.opensearch.integration.OpenSearchSearchProperties;
+import tools.jackson.core.Version;
+import tools.jackson.core.json.PackageVersion;
 
 /** What the production configuration must keep, checked without starting a server. */
 class ProductionConfigurationTest {
@@ -137,5 +141,13 @@ class ProductionConfigurationTest {
             assertThatThrownBy(() -> new OpenSearchSearchProperties(null, null, null, null, null, null, null, null, null, bad))
                     .as(bad).isInstanceOf(IllegalStateException.class);
         }
+    }
+
+    @Test
+    void theEmbeddedTomcatAndJacksonIncludeTheirSecurityFixes() {
+        // The Boot parent stays on the starter's version, so the pom overrides these two; a parent bump must not lower them.
+        int[] tomcat = Arrays.stream(ServerInfo.getServerNumber().split("\\.")).mapToInt(Integer::parseInt).toArray();
+        assertThat(Arrays.compare(tomcat, new int[] {11, 0, 27})).as("Tomcat %s", ServerInfo.getServerNumber()).isNotNegative();
+        assertThat(PackageVersion.VERSION).isGreaterThanOrEqualTo(new Version(3, 1, 7, null, null, null));
     }
 }
