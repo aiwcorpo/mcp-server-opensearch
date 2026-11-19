@@ -49,7 +49,7 @@ There is no separate lint or format step. ERROR lines in the test output come fr
 - Never log tokens, credentials or OpenSearch response bodies; follow the existing `event=... key=value` log style.
 - Test methods are camelCase sentences (`withoutJwtEveryMcpRequestIs401`). Tests use `StubBackend` and dummy data only.
 - The `dev` profile is for loopback runs; never put it in an env file, a systemd unit, `deploy/` or the image.
-- CHANGELOG.md: newest first. 2.0.0 is released (tag `v2.0.0`); put new entries under `## Unreleased` at the top.
+- CHANGELOG.md: newest first. 2.0.1 is released (tag `v2.0.1`); put new entries under `## Unreleased` at the top.
 - Workflow actions are pinned to full commit SHAs and images (CI, `Dockerfile`) to digests. Keep it that way when bumping.
 
 ## Boundaries
