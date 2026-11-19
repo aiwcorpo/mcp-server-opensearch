@@ -2,6 +2,18 @@
 
 Versions follow SemVer, newest first.
 
+## 2.0.1
+
+Patch release: carries the 2026-11-13 audit fixes. Built on `mcp-platform-starter` 4.1.0 and `mcp-contracts` 7.2.0 (Spring Boot parent stays 4.1.0).
+
+- `mcp-platform-starter` 4.0.0 -> 4.1.0, which brings `mcp-contracts` 7.0.0 -> 7.2.0 through the platform BOM.
+- Tomcat, Jackson, Spring Framework, Netty, Log4j and Guava are raised to their fixed versions (set as properties and in
+  `dependencyManagement`, because the Boot parent stays at 4.1.0 to match the starter).
+- The release workflow refuses to push an image when the GitHub Release or the image of that version already exists, so a re-run or a
+  moved tag cannot replace a published version. `CONTRIBUTING.md` lists the repository settings the workflow relies on.
+- The GitLab merge-request pipeline reads a Maven cache key of its own and never uploads it.
+- The README and the install guide are rewritten for readers who install the server, and link to the published documentation site.
+
 ## 2.0.0
 
 Major release: the policies of the server live in this repository. Built on `mcp-platform-starter` 4.0.0 and `mcp-contracts` 7.0.0.

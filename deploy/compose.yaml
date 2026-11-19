@@ -12,7 +12,7 @@ name: mcp-opensearch
 
 services:
   mcp-opensearch:
-    image: ${MCP_REGISTRY:-ghcr.io/aiwcorpo}/mcp-server-opensearch:${MCP_OPENSEARCH_VERSION:-2.0.0}
+    image: ${MCP_REGISTRY:-ghcr.io/aiwcorpo}/mcp-server-opensearch:${MCP_OPENSEARCH_VERSION:-2.0.1}
     build:
       context: ..
       dockerfile: Dockerfile
